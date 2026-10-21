@@ -1,0 +1,29 @@
+# ---- TangDynasty 临时 / 锁文件 ----
+*.lock.f
+*.dmp
+.recent_user_depot.ini
+*.bak
+*~
+*.autosave
+
+# ---- ModelSim 仿真临时产物 ----
+*.wlf
+*.vstf
+transcript
+/vsim.wlf
+**/work/
+**/*.cr.mti
+
+# ---- 操作系统 ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- 编辑器 / IDE ----
+.vscode/
+.idea/
+*.swp
+
+# ---- 日志（如需保留，删除下面两行） ----
+# *.log
+# *.logw

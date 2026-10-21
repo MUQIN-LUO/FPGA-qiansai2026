@@ -1,0 +1,21 @@
+Location         : C:\Users\Cczzzzzq\Desktop\anlogic_example_SC520CS\lab_ex1_mipi_hdmi_SC520\lab_ex1_mipi_hdmi\td_project\camera_to_dsi_display_Runs\phy_1
+Running with     : Tang Dynasty v6.2.168116
+                   Copyright (c) 2012-2025 Anlogic Inc.
+Top Model        : design_top_wrapper
+Device           : PH1P35MDG324
+Speed            : 3
+
+Timing Mode      : manhattan
+Setup            : WNS  1479ps  TNS        0ps  NUM_FEPS     0
+Hold             : WNS  -284ps  TNS   -74138ps  NUM_FEPS   538
+
+Flow Statistics  :
+---------------------------------------------------------------------------------------------------
+     command     |  #calls  |  wall time   |  cpu time(s)  |  used memory(mb)  |  peak memory(mb)  
+---------------------------------------------------------------------------------------------------
+      place      |    1     |  1m12s(98%)  |   259(100%)   |       1142        |       1142        
+  import_device  |    1     |    1s(1%)    |     0(0%)     |        324        |        324        
+    import_db    |    1     |    0s(0%)    |     0(0%)     |        513        |        513        
+---------------------------------------------------------------------------------------------------
+      total      |    3     |    1m13s     |      259      |       1142        |       1142        
+---------------------------------------------------------------------------------------------------
