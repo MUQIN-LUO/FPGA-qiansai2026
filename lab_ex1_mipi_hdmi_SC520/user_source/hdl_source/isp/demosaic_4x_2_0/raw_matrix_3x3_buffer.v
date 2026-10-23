@@ -13,43 +13,43 @@ caused by the use of their own products.
 @Author      :   XiaoQingquan 
 @Time        :   2025/01 
 version:     :   1.1
-@Description :   ¸ÃÄ£¿éÖ÷ÒªÊÇÓÃÓÚ3x3¾ØÕóµÄĞÎ³É£¬ÒÔ¼°¶ÔÍ¼Ïñ±ß½çÏñËØµÄ´¦Àí
-                 ÔÚÔ­»ù´¡ÉÏÓÅ»¯ÁËÊ±Ğò£¬°ÑÔ­À´µÄÒ»Ğ©Î´ÍêÈ«¶ÔÆëµÄĞÅºÅ½øĞĞ¶ÔÆë¡£
+@Description :   è¯¥æ¨¡å—ä¸»è¦æ˜¯ç”¨äº3x3çŸ©é˜µçš„å½¢æˆï¼Œä»¥åŠå¯¹å›¾åƒè¾¹ç•Œåƒç´ çš„å¤„ç†
+                 åœ¨åŸåŸºç¡€ä¸Šä¼˜åŒ–äº†æ—¶åºï¼ŒæŠŠåŸæ¥çš„ä¸€äº›æœªå®Œå…¨å¯¹é½çš„ä¿¡å·è¿›è¡Œå¯¹é½ã€‚
 *****************************************************************/
 
 
 module raw_matrix_3x3_buffer #(
-    parameter IMG_HEIGHT = 1080,  // Í¼Ïñ¸ß¶È
-    parameter IMG_WIDTH  = 1920,   // Í¼Ïñ¿í¶È
+    parameter IMG_HEIGHT = 1080,  // å›¾åƒé«˜åº¦
+    parameter IMG_WIDTH  = 1920,   // å›¾åƒå®½åº¦
     parameter data_complete_delay = 50
 )
 (
-    input           I_clk   ,   // Ê±ÖÓĞÅºÅ
-    input           I_rst_n ,   // ¸´Î»ĞÅºÅ£¬µÍÓĞĞ§
+    input           I_clk   ,   // æ—¶é’Ÿä¿¡å·
+    input           I_rst_n ,   // å¤ä½ä¿¡å·ï¼Œä½æœ‰æ•ˆ
 
-    input [39:0]                         axi4s_video_tdata ,  // AXI4-StreamÊÓÆµÊı¾İ
+    input [39:0]                         axi4s_video_tdata ,  // AXI4-Streamè§†é¢‘æ•°æ®
     input [9:0]                          axi4s_video_tdest ,
-    input                                axi4s_video_tlast ,  // ĞĞ½áÊøĞÅºÅ
-    input                                axi4s_video_tvalid,  // Êı¾İÓĞĞ§ĞÅºÅ
-    input                                axi4s_video_tuser ,  // Ö¡¿ªÊ¼ĞÅºÅ
-    output                               axi4s_video_tready,  // ´ÓÄ£¿é×¼±¸ºÃ½ÓÊÜÊı¾İ
+    input                                axi4s_video_tlast ,  // è¡Œç»“æŸä¿¡å·
+    input                                axi4s_video_tvalid,  // æ•°æ®æœ‰æ•ˆä¿¡å·
+    input                                axi4s_video_tuser ,  // å¸§å¼€å§‹ä¿¡å·
+    output                               axi4s_video_tready,  // ä»æ¨¡å—å‡†å¤‡å¥½æ¥å—æ•°æ®
 
-    output                               O_tlast         ,   // ĞĞ½áÊøĞÅºÅÊä³ö
-    output                               O_tuser         ,   // Ö¡¿ªÊ¼ĞÅºÅÊä³ö
-    output                               O_tvalid        ,   // Êı¾İÓĞĞ§ĞÅºÅÊä³ö
-    input                                O_tready        ,   // ÉÏÒ»¼¶Ä£¿é×¼±¸ºÃ½ÓÊÜÊı¾İ
+    output                               O_tlast         ,   // è¡Œç»“æŸä¿¡å·è¾“å‡º
+    output                               O_tuser         ,   // å¸§å¼€å§‹ä¿¡å·è¾“å‡º
+    output                               O_tvalid        ,   // æ•°æ®æœ‰æ•ˆä¿¡å·è¾“å‡º
+    input                                O_tready        ,   // ä¸Šä¸€çº§æ¨¡å—å‡†å¤‡å¥½æ¥å—æ•°æ®
 
-    output                               bayer_ypos      ,   // BayerÂË²¨Æ÷ĞĞÎ»ÖÃ
-    output  [95:0]                       matrix_last_line,   // ÉÏÒ»ĞĞ3x3¾ØÕóÊı¾İ
-    output  [95:0]                       matrix_cur_line ,   // µ±Ç°ĞĞ3x3¾ØÕóÊı¾İ
-    output  [95:0]                       matrix_next_line    // ÏÂÒ»ĞĞ3x3¾ØÕóÊı¾İ
+    output                               bayer_ypos      ,   // Bayeræ»¤æ³¢å™¨è¡Œä½ç½®
+    output  [95:0]                       matrix_last_line,   // ä¸Šä¸€è¡Œ3x3çŸ©é˜µæ•°æ®
+    output  [95:0]                       matrix_cur_line ,   // å½“å‰è¡Œ3x3çŸ©é˜µæ•°æ®
+    output  [95:0]                       matrix_next_line    // ä¸‹ä¸€è¡Œ3x3çŸ©é˜µæ•°æ®
 );
 
 
 /*********************************************************
-******************1.¹¦ÄÜÉùÃ÷*******************************
+******************1.åŠŸèƒ½å£°æ˜*******************************
 *********************************************************/
-// ¼ÆËãÊı¾İµÄÎ»¿í
+// è®¡ç®—æ•°æ®çš„ä½å®½
 function integer clog2b(
     input integer depth
 );
@@ -61,95 +61,95 @@ function integer clog2b(
 endfunction
 
 /*********************************************************
-******************2.³£ÊıÉùÃ÷*******************************
+******************2.å¸¸æ•°å£°æ˜*******************************
 *********************************************************/
-localparam N = 3;  // ¾ØÕó´óĞ¡Îª3x3
+localparam N = 3;  // çŸ©é˜µå¤§å°ä¸º3x3
 
-localparam DATA_WIDTH   = 32;  // Êı¾İÎ»¿í
+localparam DATA_WIDTH   = 32;  // æ•°æ®ä½å®½
 
-localparam IMG_WIDTH_4x = (IMG_WIDTH >> 2);  // Í¼Ïñ¿í¶È³ıÒÔ4£¬µÃµ½Ã¿¸öÊı¾İ¿éµÄÊıÁ¿
+localparam IMG_WIDTH_4x = (IMG_WIDTH >> 2);  // å›¾åƒå®½åº¦é™¤ä»¥4ï¼Œå¾—åˆ°æ¯ä¸ªæ•°æ®å—çš„æ•°é‡
 
 /*********************************************************
-******************3.ĞÅºÅÉùÃ÷*******************************
+******************3.ä¿¡å·å£°æ˜*******************************
 *********************************************************/
-// ¶¨ÒåÏßÍøĞÅºÅ
-wire                        zhenghe_tlast ;    // ºÏ²¢ºóµÄĞĞ½áÊøĞÅºÅ
-wire                        zhenghe_tuser ;    // ºÏ²¢ºóµÄÖ¡¿ªÊ¼ĞÅºÅ
-wire  [31:0]                zhenghe_tdata ;    // ºÏ²¢ºóµÄÊı¾İ
-wire                        zhenghe_tvalid;    // ºÏ²¢ºóµÄÊı¾İÓĞĞ§ĞÅºÅ
+// å®šä¹‰çº¿ç½‘ä¿¡å·
+wire                        zhenghe_tlast ;    // åˆå¹¶åçš„è¡Œç»“æŸä¿¡å·
+wire                        zhenghe_tuser ;    // åˆå¹¶åçš„å¸§å¼€å§‹ä¿¡å·
+wire  [31:0]                zhenghe_tdata ;    // åˆå¹¶åçš„æ•°æ®
+wire                        zhenghe_tvalid;    // åˆå¹¶åçš„æ•°æ®æœ‰æ•ˆä¿¡å·
 
-wire  [DATA_WIDTH-1:0]      raw_data        ;  // Ô­Ê¼Êı¾İ
-wire                        raw_data_valid  ;  // Ô­Ê¼Êı¾İÓĞĞ§ĞÅºÅ
+wire  [DATA_WIDTH-1:0]      raw_data        ;  // åŸå§‹æ•°æ®
+wire                        raw_data_valid  ;  // åŸå§‹æ•°æ®æœ‰æ•ˆä¿¡å·
 
-wire                valid   [0:N-1] ;          // ÓĞĞ§ĞÅºÅÊı×é
-wire [DATA_WIDTH:0] data    [0:N-1] ;          // Êı¾İÊı×é£¨°üº¬tuserÎ»£©
+wire                valid   [0:N-1] ;          // æœ‰æ•ˆä¿¡å·æ•°ç»„
+wire [DATA_WIDTH:0] data    [0:N-1] ;          // æ•°æ®æ•°ç»„ï¼ˆåŒ…å«tuserä½ï¼‰
 
-wire                O_raw_tlast_d0;            // ĞĞ½áÊøĞÅºÅ£¬ÑÓ³Ù0ÖÜÆÚ
-wire                O_raw_tuser_d0;            // Ö¡¿ªÊ¼ĞÅºÅ£¬ÑÓ³Ù0ÖÜÆÚ
-wire                I_raw_tready;              // Ä£¿é×¼±¸ºÃ½ÓÊÜÔ­Ê¼Êı¾İ
-wire [32:0]         next_line_data;            // ÏÂÒ»ĞĞÊı¾İ
-wire [32:0]         data_d2;                   // Êı¾İÑÓ³Ù2¸öÖÜÆÚ
-wire                next_line_start;           // ÏÂÒ»ĞĞµÄ¿ªÊ¼ĞÅºÅ
-wire                bayer_ypos_d0;             // BayerÎ»ÖÃ£¬ÑÓ³Ù0ÖÜÆÚ
+wire                O_raw_tlast_d0;            // è¡Œç»“æŸä¿¡å·ï¼Œå»¶è¿Ÿ0å‘¨æœŸ
+wire                O_raw_tuser_d0;            // å¸§å¼€å§‹ä¿¡å·ï¼Œå»¶è¿Ÿ0å‘¨æœŸ
+wire                I_raw_tready;              // æ¨¡å—å‡†å¤‡å¥½æ¥å—åŸå§‹æ•°æ®
+wire [32:0]         next_line_data;            // ä¸‹ä¸€è¡Œæ•°æ®
+wire [32:0]         data_d2;                   // æ•°æ®å»¶è¿Ÿ2ä¸ªå‘¨æœŸ
+wire                next_line_start;           // ä¸‹ä¸€è¡Œçš„å¼€å§‹ä¿¡å·
+wire                bayer_ypos_d0;             // Bayerä½ç½®ï¼Œå»¶è¿Ÿ0å‘¨æœŸ
 
 /*********************************************************
-******************4.¼Ä´æÆ÷ĞÅºÅÉùÃ÷*************************
+******************4.å¯„å­˜å™¨ä¿¡å·å£°æ˜*************************
 *********************************************************/
-// ¶¨Òå¼Ä´æÆ÷ĞÅºÅ
-reg [95:0]      matrix_cur_line_buffer       ; // µ±Ç°ĞĞµÄ3x3¾ØÕó»º³å
-reg [95:0]      matrix_last_line_buffer      ; // ÉÏÒ»ĞĞµÄ3x3¾ØÕó»º³å
-reg [95:0]      matrix_next_line_buffer      ; // ÏÂÒ»ĞĞµÄ3x3¾ØÕó»º³å
-reg             tlast_d0,tlast_d1,tlast_d2;     // ĞĞ½áÊøĞÅºÅÑÓ³Ù¼Ä´æÆ÷
-reg             tuser_d0,tuser_d1,tuser_d2;     // Ö¡¿ªÊ¼ĞÅºÅÑÓ³Ù¼Ä´æÆ÷
-reg             ch_valid;                       // Êı¾İÍ¨µÀÓĞĞ§ĞÅºÅ
-reg [13:0]      h_cnt;                          // Ë®Æ½ÏñËØ¼ÆÊıÆ÷
-reg [13:0]      v_cnt,v_cnt_d;                  // ´¹Ö±ÏñËØ¼ÆÊıÆ÷¼°ÆäÑÓ³Ù
-reg             next_line_data_valid;           // ÏÂÒ»ĞĞÊı¾İÓĞĞ§ĞÅºÅ
-reg             valid_d0,valid_d1;              // ÓĞĞ§ĞÅºÅÑÓ³Ù¼Ä´æÆ÷
-reg             bayer_ypos_d;                   // BayerÎ»ÖÃÑÓ³Ù¼Ä´æÆ÷
-reg  [32:0]     data_d0_d,data_d0;              // Êı¾İÑÓ³Ù¼Ä´æÆ÷
+// å®šä¹‰å¯„å­˜å™¨ä¿¡å·
+reg [95:0]      matrix_cur_line_buffer       ; // å½“å‰è¡Œçš„3x3çŸ©é˜µç¼“å†²
+reg [95:0]      matrix_last_line_buffer      ; // ä¸Šä¸€è¡Œçš„3x3çŸ©é˜µç¼“å†²
+reg [95:0]      matrix_next_line_buffer      ; // ä¸‹ä¸€è¡Œçš„3x3çŸ©é˜µç¼“å†²
+reg             tlast_d0,tlast_d1,tlast_d2;     // è¡Œç»“æŸä¿¡å·å»¶è¿Ÿå¯„å­˜å™¨
+reg             tuser_d0,tuser_d1,tuser_d2;     // å¸§å¼€å§‹ä¿¡å·å»¶è¿Ÿå¯„å­˜å™¨
+reg             ch_valid;                       // æ•°æ®é€šé“æœ‰æ•ˆä¿¡å·
+reg [13:0]      h_cnt;                          // æ°´å¹³åƒç´ è®¡æ•°å™¨
+reg [13:0]      v_cnt,v_cnt_d;                  // å‚ç›´åƒç´ è®¡æ•°å™¨åŠå…¶å»¶è¿Ÿ
+reg             next_line_data_valid;           // ä¸‹ä¸€è¡Œæ•°æ®æœ‰æ•ˆä¿¡å·
+reg             valid_d0,valid_d1;              // æœ‰æ•ˆä¿¡å·å»¶è¿Ÿå¯„å­˜å™¨
+reg             bayer_ypos_d;                   // Bayerä½ç½®å»¶è¿Ÿå¯„å­˜å™¨
+reg  [32:0]     data_d0_d,data_d0;              // æ•°æ®å»¶è¿Ÿå¯„å­˜å™¨
 reg  [32:0]     data_d1;
 
 /*********************************************************
-******************5.×éºÏÂß¼­******************************
+******************5.ç»„åˆé€»è¾‘******************************
 *********************************************************/
-// ½«Êı¾İºÍÓĞĞ§ĞÅºÅ½øĞĞÁ¬½Ó
-assign data[0]  = {zhenghe_tuser, zhenghe_tdata};  // ½«tuserºÍÊı¾İÆ´½Ó
-assign valid[0] = zhenghe_tvalid;                  // µÚÒ»¸öÓĞĞ§ĞÅºÅ
+// å°†æ•°æ®å’Œæœ‰æ•ˆä¿¡å·è¿›è¡Œè¿æ¥
+assign data[0]  = {zhenghe_tuser, zhenghe_tdata};  // å°†tuserå’Œæ•°æ®æ‹¼æ¥
+assign valid[0] = zhenghe_tvalid;                  // ç¬¬ä¸€ä¸ªæœ‰æ•ˆä¿¡å·
 
-// ½«×¼±¸ĞÅºÅÁ¬½Óµ½ÉÏ¼¶Ä£¿é
+// å°†å‡†å¤‡ä¿¡å·è¿æ¥åˆ°ä¸Šçº§æ¨¡å—
 assign axi4s_video_tready = O_tready;
 
 /*********************************************************/
-// ½«¾ØÕó»º³åÊä³ö
+// å°†çŸ©é˜µç¼“å†²è¾“å‡º
 assign matrix_last_line = matrix_last_line_buffer;
 assign matrix_cur_line  = matrix_cur_line_buffer ;
 assign matrix_next_line = matrix_next_line_buffer;
 
-// ¼ÆËãBayerÂË²¨Æ÷µÄĞĞÎ»ÖÃ
+// è®¡ç®—Bayeræ»¤æ³¢å™¨çš„è¡Œä½ç½®
 assign bayer_ypos_d0 = !v_cnt_d[0] & ch_valid;
 
 /*********************************************************
-******************6.Ä£¿éÊµÀı»¯*****************************
+******************6.æ¨¡å—å®ä¾‹åŒ–*****************************
 *********************************************************/
-// ÊµÀı»¯mipi_to_raw_converterÄ£¿é£¬½«MIPIĞ­ÒéµÄÊı¾İ×ª»»ÎªRAWÊı¾İ
+// å®ä¾‹åŒ–mipi_to_raw_converteræ¨¡å—ï¼Œå°†MIPIåè®®çš„æ•°æ®è½¬æ¢ä¸ºRAWæ•°æ®
 mipi_to_raw_converter mipi_to_raw_converter_r0(
-    .I_clk       (I_clk  ),              // Ê±ÖÓĞÅºÅ
-    .I_rst_n     (I_rst_n),              // ¸´Î»ĞÅºÅ£¬µÍÓĞĞ§
-    .I_raw_tdata (axi4s_video_tdata ),   // ÊäÈëÔ­Ê¼Êı¾İ
-    .I_raw_tdest (axi4s_video_tdest ),   // ÊäÈëÄ¿µÄµØµØÖ·
-    .I_raw_tlast (axi4s_video_tlast ),   // ÊäÈëĞĞ½áÊøĞÅºÅ
-    .I_raw_tvalid(axi4s_video_tvalid),   // ÊäÈëÊı¾İÓĞĞ§ĞÅºÅ
-    .I_raw_tuser (axi4s_video_tuser),    // ÊäÈëÖ¡¿ªÊ¼ĞÅºÅ
-    .I_raw_tready(I_raw_tready  ),       // Êä³ö×¼±¸ºÃĞÅºÅ
-    .O_raw_tdata (raw_data      ),       // Êä³öÔ­Ê¼Êı¾İ
-    .O_raw_tlast (O_raw_tlast_d0),       // Êä³öĞĞ½áÊøĞÅºÅ
-    .O_raw_tvalid(raw_data_valid),       // Êä³öÊı¾İÓĞĞ§ĞÅºÅ
-    .O_raw_tuser (O_raw_tuser_d0),       // Êä³öÖ¡¿ªÊ¼ĞÅºÅ
-    .O_raw_tready(1)                     // Ä£¿éÊ¼ÖÕ×¼±¸ºÃ½ÓÊÜÊı¾İ
+    .I_clk       (I_clk  ),              // æ—¶é’Ÿä¿¡å·
+    .I_rst_n     (I_rst_n),              // å¤ä½ä¿¡å·ï¼Œä½æœ‰æ•ˆ
+    .I_raw_tdata (axi4s_video_tdata ),   // è¾“å…¥åŸå§‹æ•°æ®
+    .I_raw_tdest (axi4s_video_tdest ),   // è¾“å…¥ç›®çš„åœ°åœ°å€
+    .I_raw_tlast (axi4s_video_tlast ),   // è¾“å…¥è¡Œç»“æŸä¿¡å·
+    .I_raw_tvalid(axi4s_video_tvalid),   // è¾“å…¥æ•°æ®æœ‰æ•ˆä¿¡å·
+    .I_raw_tuser (axi4s_video_tuser),    // è¾“å…¥å¸§å¼€å§‹ä¿¡å·
+    .I_raw_tready(I_raw_tready  ),       // è¾“å‡ºå‡†å¤‡å¥½ä¿¡å·
+    .O_raw_tdata (raw_data      ),       // è¾“å‡ºåŸå§‹æ•°æ®
+    .O_raw_tlast (O_raw_tlast_d0),       // è¾“å‡ºè¡Œç»“æŸä¿¡å·
+    .O_raw_tvalid(raw_data_valid),       // è¾“å‡ºæ•°æ®æœ‰æ•ˆä¿¡å·
+    .O_raw_tuser (O_raw_tuser_d0),       // è¾“å‡ºå¸§å¼€å§‹ä¿¡å·
+    .O_raw_tready(1)                     // æ¨¡å—å§‹ç»ˆå‡†å¤‡å¥½æ¥å—æ•°æ®
 );
 
-// ÊµÀı»¯¡°zhenghe¡±Ä£¿é£¬½«Êı¾İ½øĞĞºÏ²¢´¦Àí
+// å®ä¾‹åŒ–â€œzhengheâ€æ¨¡å—ï¼Œå°†æ•°æ®è¿›è¡Œåˆå¹¶å¤„ç†
 zhenghe#(
     .IMG_WIDTH ( IMG_WIDTH ),
     .IMG_HEIGHT( IMG_HEIGHT),
@@ -157,41 +157,41 @@ zhenghe#(
     .data_complete_delay (data_complete_delay)
 ) 
 zhenghe_d(
-    .I_clk    (I_clk   ),               // Ê±ÖÓĞÅºÅ
-    .I_rst_n  (I_rst_n ),               // ¸´Î»ĞÅºÅ£¬µÍÓĞĞ§
+    .I_clk    (I_clk   ),               // æ—¶é’Ÿä¿¡å·
+    .I_rst_n  (I_rst_n ),               // å¤ä½ä¿¡å·ï¼Œä½æœ‰æ•ˆ
 
-    .I_tlast  (O_raw_tlast_d0 ),        // ÊäÈëĞĞ½áÊøĞÅºÅ
-    .I_tuser  (O_raw_tuser_d0 ),        // ÊäÈëÖ¡¿ªÊ¼ĞÅºÅ
-    .I_tdata  (raw_data ),              // ÊäÈëÔ­Ê¼Êı¾İ
-    .I_tvalid (raw_data_valid),         // ÊäÈëÊı¾İÓĞĞ§ĞÅºÅ
+    .I_tlast  (O_raw_tlast_d0 ),        // è¾“å…¥è¡Œç»“æŸä¿¡å·
+    .I_tuser  (O_raw_tuser_d0 ),        // è¾“å…¥å¸§å¼€å§‹ä¿¡å·
+    .I_tdata  (raw_data ),              // è¾“å…¥åŸå§‹æ•°æ®
+    .I_tvalid (raw_data_valid),         // è¾“å…¥æ•°æ®æœ‰æ•ˆä¿¡å·
 
-    .O_tlast  (zhenghe_tlast ),         // Êä³öºÏ²¢ºóµÄĞĞ½áÊøĞÅºÅ
-    .O_tuser  (zhenghe_tuser ),         // Êä³öºÏ²¢ºóµÄÖ¡¿ªÊ¼ĞÅºÅ
-    .O_tdata  (zhenghe_tdata ),         // Êä³öºÏ²¢ºóµÄÊı¾İ
-    .O_tvalid (zhenghe_tvalid)          // Êä³öºÏ²¢ºóµÄÊı¾İÓĞĞ§ĞÅºÅ
+    .O_tlast  (zhenghe_tlast ),         // è¾“å‡ºåˆå¹¶åçš„è¡Œç»“æŸä¿¡å·
+    .O_tuser  (zhenghe_tuser ),         // è¾“å‡ºåˆå¹¶åçš„å¸§å¼€å§‹ä¿¡å·
+    .O_tdata  (zhenghe_tdata ),         // è¾“å‡ºåˆå¹¶åçš„æ•°æ®
+    .O_tvalid (zhenghe_tvalid)          // è¾“å‡ºåˆå¹¶åçš„æ•°æ®æœ‰æ•ˆä¿¡å·
 );
 
-// Éú³ÉÁ½ĞĞ»º³åÇø£¬Ê¹ÓÃÏßĞÔ»º³åÇøÊµÏÖ3x3¾ØÕóµÄĞĞÊı¾İ»º´æ
+// ç”Ÿæˆä¸¤è¡Œç¼“å†²åŒºï¼Œä½¿ç”¨çº¿æ€§ç¼“å†²åŒºå®ç°3x3çŸ©é˜µçš„è¡Œæ•°æ®ç¼“å­˜
 genvar i;
 generate
     for(i=1; i<3; i=i+1)
-    begin: two_line_buffer  // Ä£¿éÃüÃûÎªtwo_line_buffer
+    begin: two_line_buffer  // æ¨¡å—å‘½åä¸ºtwo_line_buffer
         line_buffer_demosaic #(
             .IMG_HEIGHT (IMG_HEIGHT),
             .IMG_WIDTH  (IMG_WIDTH )
         ) line_buffer_demosaic_r1 (
-            .I_clk     ( I_clk      ),    // Ê±ÖÓĞÅºÅ
-            .I_rst_n   ( I_rst_n    ),    // ¸´Î»ĞÅºÅ£¬µÍÓĞĞ§
-            .I_tuser   ( data[i-1][32] & valid[i-1]), // ÊäÈëÖ¡¿ªÊ¼ĞÅºÅ
-            .I_valid   ( valid[i-1] ),    // ÊäÈëÓĞĞ§ĞÅºÅ
-            .I_data    ( data[i-1]  ),    // ÊäÈëÊı¾İ
-            .O_valid   ( valid[i]   ),    // Êä³öÓĞĞ§ĞÅºÅ
-            .O_data    ( data[i]    )     // Êä³öÊı¾İ
+            .I_clk     ( I_clk      ),    // æ—¶é’Ÿä¿¡å·
+            .I_rst_n   ( I_rst_n    ),    // å¤ä½ä¿¡å·ï¼Œä½æœ‰æ•ˆ
+            .I_tuser   ( data[i-1][32] & valid[i-1]), // è¾“å…¥å¸§å¼€å§‹ä¿¡å·
+            .I_valid   ( valid[i-1] ),    // è¾“å…¥æœ‰æ•ˆä¿¡å·
+            .I_data    ( data[i-1]  ),    // è¾“å…¥æ•°æ®
+            .O_valid   ( valid[i]   ),    // è¾“å‡ºæœ‰æ•ˆä¿¡å·
+            .O_data    ( data[i]    )     // è¾“å‡ºæ•°æ®
         );           
     end        
 endgenerate
 
-// ÓÉÓÚÔÚBRAMÖĞÃ¿´ÎÊä³öÊı¾İ¶¼»áÑÓ³ÙÒ»¸öÖÜÆÚ£¬ËùÒÔÒªÊ¹ÕâĞ©Êı¾İ¶ÔÆë£¬ĞèÒª¶ÔÕâĞ©Êı¾İ½øĞĞÑÓ³Ù´¦Àí£¬ÆäÖĞdata[0]ÑÓ³Ù2¸öÖÜÆÚ£¬data[1]ÑÓ³ÙÒ»¸öÖÜÆÚ
+// ç”±äºåœ¨BRAMä¸­æ¯æ¬¡è¾“å‡ºæ•°æ®éƒ½ä¼šå»¶è¿Ÿä¸€ä¸ªå‘¨æœŸï¼Œæ‰€ä»¥è¦ä½¿è¿™äº›æ•°æ®å¯¹é½ï¼Œéœ€è¦å¯¹è¿™äº›æ•°æ®è¿›è¡Œå»¶è¿Ÿå¤„ç†ï¼Œå…¶ä¸­data[0]å»¶è¿Ÿ2ä¸ªå‘¨æœŸï¼Œdata[1]å»¶è¿Ÿä¸€ä¸ªå‘¨æœŸ
 always @(posedge I_clk or negedge I_rst_n) begin
     if (!I_rst_n) begin
         data_d0_d <= 0;
@@ -211,7 +211,7 @@ end
 
 assign data_d2 = data[2];
 /*********************************************************
-***********3x3¾ØÕóµÄĞÎ³É£¬ÒÔ¼°¶Ô±ß½çÔªËØµÄ²¹³ä´¦Àí***********
+***********3x3çŸ©é˜µçš„å½¢æˆï¼Œä»¥åŠå¯¹è¾¹ç•Œå…ƒç´ çš„è¡¥å……å¤„ç†***********
 *********************************************************/
 
 always @(posedge I_clk or negedge I_rst_n) begin 
@@ -220,46 +220,46 @@ always @(posedge I_clk or negedge I_rst_n) begin
         matrix_cur_line_buffer  <= 'b0 ;
         matrix_next_line_buffer <= 'b0 ;
     end else if(valid_d1) begin
-        if(v_cnt == 0) begin  // µÚÒ»ĞĞ
-            if(h_cnt == 0) begin  // µÚÒ»ĞĞµÄµÚÒ»¸öÏñËØ
+        if(v_cnt == 0) begin  // ç¬¬ä¸€è¡Œ
+            if(h_cnt == 0) begin  // ç¬¬ä¸€è¡Œçš„ç¬¬ä¸€ä¸ªåƒç´ 
                 matrix_last_line_buffer <= {{24{1'b0}}, data_d0[31:24], data_d0[31:0], data_d0[31:0]} ;
                 matrix_cur_line_buffer  <= {{24{1'b0}}, data_d0[31:24], data_d0[31:0], data_d0[31:0]} ;
                 matrix_next_line_buffer <= {{24{1'b0}}, data_d0[31:24], data_d0[31:0], data_d0[31:0]} ;
-            end else if(h_cnt == (IMG_WIDTH_4x - 1)) begin  // µÚÒ»ĞĞµÄ×îºóÒ»¸öÏñËØ
+            end else if(h_cnt == (IMG_WIDTH_4x - 1)) begin  // ç¬¬ä¸€è¡Œçš„æœ€åä¸€ä¸ªåƒç´ 
                 matrix_last_line_buffer <= {matrix_next_line_buffer [63:0], matrix_next_line_buffer[7:0], {24{1'b0}}} ;
                 matrix_cur_line_buffer  <= {matrix_next_line_buffer [63:0], matrix_next_line_buffer[7:0], {24{1'b0}}} ;
                 matrix_next_line_buffer <= {matrix_next_line_buffer [63:0], matrix_next_line_buffer[7:0], {24{1'b0}}} ;
-            end else begin  // µÚÒ»ĞĞµÄÖĞ¼äÏñËØ
+            end else begin  // ç¬¬ä¸€è¡Œçš„ä¸­é—´åƒç´ 
                 matrix_last_line_buffer <= {matrix_next_line_buffer[63:0], data_d0[31:0]} ;
                 matrix_cur_line_buffer  <= {matrix_next_line_buffer[63:0], data_d0[31:0]} ;
                 matrix_next_line_buffer <= {matrix_next_line_buffer[63:0], data_d0[31:0]} ;
             end
         end
-        else if(v_cnt == 1) begin  // µÚ¶şĞĞ
-            if(h_cnt == 0) begin  // µÚ¶şĞĞµÄµÚÒ»¸öÏñËØ
+        else if(v_cnt == 1) begin  // ç¬¬äºŒè¡Œ
+            if(h_cnt == 0) begin  // ç¬¬äºŒè¡Œçš„ç¬¬ä¸€ä¸ªåƒç´ 
                 matrix_last_line_buffer <= {{24{1'b0}}, data_d1[31:24], data_d1[31:0], data_d1[31:0]} ;
                 matrix_cur_line_buffer  <= {{24{1'b0}}, data_d1[31:24], data_d1[31:0], data_d1[31:0]} ;
                 matrix_next_line_buffer <= {{24{1'b0}}, data_d0[31:24], data_d0[31:0], data_d0[31:0]} ;
-            end else if(h_cnt == (IMG_WIDTH_4x - 1)) begin  // µÚ¶şĞĞµÄ×îºóÒ»¸öÏñËØ
+            end else if(h_cnt == (IMG_WIDTH_4x - 1)) begin  // ç¬¬äºŒè¡Œçš„æœ€åä¸€ä¸ªåƒç´ 
                 matrix_last_line_buffer <= {matrix_cur_line_buffer [63:0], matrix_cur_line_buffer[7:0], {24{1'b0}}} ;
                 matrix_cur_line_buffer  <= {matrix_cur_line_buffer [63:0], matrix_cur_line_buffer[7:0], {24{1'b0}}} ;
                 matrix_next_line_buffer <= {matrix_next_line_buffer [63:0], matrix_next_line_buffer[7:0], {24{1'b0}}} ;
-            end else begin  // µÚ¶şĞĞµÄÖĞ¼äÏñËØ
+            end else begin  // ç¬¬äºŒè¡Œçš„ä¸­é—´åƒç´ 
                 matrix_last_line_buffer <= {matrix_cur_line_buffer[63:0],  data_d1[31:0]} ;
                 matrix_cur_line_buffer  <= {matrix_cur_line_buffer[63:0],  data_d1[31:0]} ;
                 matrix_next_line_buffer <= {matrix_next_line_buffer[63:0], data_d0[31:0]} ;
             end
         end
-        else begin  // µÚÈıĞĞ¼°ÒÔºó
-            if(h_cnt == 0) begin  // µÚÒ»¸öÏñËØ
+        else begin  // ç¬¬ä¸‰è¡ŒåŠä»¥å
+            if(h_cnt == 0) begin  // ç¬¬ä¸€ä¸ªåƒç´ 
                 matrix_last_line_buffer <= {{24{1'b0}}, data_d2[31:24], data_d2[31:0], data_d2[31:0]} ;
                 matrix_cur_line_buffer  <= {{24{1'b0}}, data_d1[31:24], data_d1[31:0], data_d1[31:0]} ;
                 matrix_next_line_buffer <= {{24{1'b0}}, data_d0[31:24], data_d0[31:0], data_d0[31:0]} ;
-            end else if(h_cnt == (IMG_WIDTH_4x - 1)) begin  // ×îºóÒ»¸öÏñËØ
+            end else if(h_cnt == (IMG_WIDTH_4x - 1)) begin  // æœ€åä¸€ä¸ªåƒç´ 
                 matrix_last_line_buffer <= {matrix_last_line_buffer[63:0], matrix_last_line_buffer[7:0], {24{1'b0}}} ;
                 matrix_cur_line_buffer  <= {matrix_cur_line_buffer [63:0], matrix_cur_line_buffer [7:0], {24{1'b0}}} ;
                 matrix_next_line_buffer <= {matrix_next_line_buffer[63:0], matrix_next_line_buffer[7:0], {24{1'b0}}} ;
-            end else begin  // ÖĞ¼äÏñËØ
+            end else begin  // ä¸­é—´åƒç´ 
                 matrix_last_line_buffer <= {matrix_last_line_buffer[63:0], data_d2[31:0]} ;
                 matrix_cur_line_buffer  <= {matrix_cur_line_buffer [63:0], data_d1[31:0]} ;
                 matrix_next_line_buffer <= {matrix_next_line_buffer[63:0], data_d0[31:0]} ;
@@ -273,7 +273,7 @@ always @(posedge I_clk or negedge I_rst_n) begin
     end 
 end
 
-// ¼ÆËãË®Æ½ºÍ´¹Ö±¼ÆÊıÆ÷
+// è®¡ç®—æ°´å¹³å’Œå‚ç›´è®¡æ•°å™¨
 always @(posedge I_clk or negedge I_rst_n) begin
     if(!I_rst_n || zhenghe_tuser) begin
         h_cnt <= 0;
@@ -284,7 +284,7 @@ always @(posedge I_clk or negedge I_rst_n) begin
     end
 end
 
-// Êı¾İÓĞĞ§ĞÅºÅµÄÑÓ³Ù´¦Àí
+// æ•°æ®æœ‰æ•ˆä¿¡å·çš„å»¶è¿Ÿå¤„ç†
 always @(posedge I_clk or negedge I_rst_n) begin
     if(!I_rst_n) begin
         ch_valid <= 0;
@@ -297,7 +297,7 @@ end
 
 assign bayer_ypos = bayer_ypos_d0 ;
 
-// ¶ÔtuserºÍtlastĞÅºÅ½øĞĞÍ¬²½´¦Àí£¬´ËÊ±Êı¾İºÍÁ÷¿ØÖÆĞÅºÅÒÑ¾­Í¬²½
+// å¯¹tuserå’Œtlastä¿¡å·è¿›è¡ŒåŒæ­¥å¤„ç†ï¼Œæ­¤æ—¶æ•°æ®å’Œæµæ§åˆ¶ä¿¡å·å·²ç»åŒæ­¥
 always @(posedge I_clk or negedge I_rst_n) begin
     if (!I_rst_n) begin
         tlast_d0 <= 0;
@@ -317,7 +317,7 @@ always @(posedge I_clk or negedge I_rst_n) begin
     end
 end
 
-// ½«Í¬²½ºóµÄĞÅºÅÊä³ö
+// å°†åŒæ­¥åçš„ä¿¡å·è¾“å‡º
 assign O_tuser  = tuser_d2;
 assign O_tlast  = tlast_d2;
 assign O_tvalid = ch_valid;

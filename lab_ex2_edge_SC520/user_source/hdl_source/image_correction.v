@@ -9,7 +9,7 @@ module image_correction #(
     input                             I_raw_valid 		,     
     input                             I_raw_frame_start	,
     input                             I_raw_frame_end  	,
-    // 输出RAW10数据
+    // 杈撳嚭RAW10鏁版嵁
     output     [DATA_WIDTH - 1:0]     O_raw_tdata 		,
     output                            O_raw_tlast 		,
     output                            O_raw_tvalid		,
@@ -47,7 +47,7 @@ module image_correction #(
     end
 
     wire last = (cnt == 10);
-    // 计算行数
+    // 璁＄畻琛屾暟
     always @(posedge I_clk or negedge I_rst_n) begin
         if(!I_rst_n || I_raw_frame_start)
             v_cnt <= 0;
@@ -57,7 +57,7 @@ module image_correction #(
 
     assign V_valid = (v_cnt >= 0) && (v_cnt <= 599);
 
-    // 计算每行像素个数
+    // 璁＄畻姣忚鍍忕礌涓暟
     always @(posedge I_clk or negedge I_rst_n) begin
         if(!I_rst_n || I_raw_frame_start) 
             h_cnt <= 0;

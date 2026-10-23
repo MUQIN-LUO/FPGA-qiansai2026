@@ -26,8 +26,8 @@
 *7) _r delay or register
 *8) _s state mechine
 *********************************************************************/
-/*********raw10_unpacket_2lane RAWÊı¾İ¸ñÊ½×ªÎªRAW10,Ö®ºó¶ªÆúµØÎ»£¬ÊµÏÖRAW8***********
---°æ±¾ºÅ1.0
+/*********raw10_unpacket_2lane RAWæ•°æ®æ ¼å¼è½¬ä¸ºRAW10,ä¹‹åä¸¢å¼ƒåœ°ä½ï¼Œå®ç°RAW8***********
+--ç‰ˆæœ¬å·1.0
 *********************************************************************/
 
 module raw10_unpacket_2lane (
@@ -62,7 +62,7 @@ module raw10_unpacket_2lane (
   wire [39:0] S_fifo_rd_data;  //synthesis keep
 
 
-  //Í¬²½´¦Àí£¬MIPIÊäÈë½øÀ´ºó£¬I_csi_valid²»ÊÇÁ¬Ğø£¬Ã¿¸öI_csi_valid ´òÅÂ1´Î
+  //åŒæ­¥å¤„ç†ï¼ŒMIPIè¾“å…¥è¿›æ¥åï¼ŒI_csi_validä¸æ˜¯è¿ç»­ï¼Œæ¯ä¸ªI_csi_valid æ‰“æ€•1æ¬¡
   always @(posedge I_clk) begin
     O_raw10_frame_start <= I_csi_frame_start;
     O_raw10_frame_end   <= I_csi_frame_end;
@@ -75,8 +75,8 @@ module raw10_unpacket_2lane (
   end
 
   always @(posedge I_clk) begin
-    if({S_csi_valid_2d,S_csi_valid_1d,I_csi_valid}==3'b101)begin//µ±S_csi_valid_2dºÍI_csi_validÍ¬Ê±ÓĞĞ§£¬S_csi_valid_2d´ú±íÇ°Ò»¸öÓĞĞ§32Bit I_csi_valid´ú±íÁË×îĞÂµÄ32bit
-      if (S_cnt == 3'd4)  //Ò»¸öÖÜÆÚ½áÊø
+    if({S_csi_valid_2d,S_csi_valid_1d,I_csi_valid}==3'b101)begin//å½“S_csi_valid_2då’ŒI_csi_validåŒæ—¶æœ‰æ•ˆï¼ŒS_csi_valid_2dä»£è¡¨å‰ä¸€ä¸ªæœ‰æ•ˆ32Bit I_csi_validä»£è¡¨äº†æœ€æ–°çš„32bit
+      if (S_cnt == 3'd4)  //ä¸€ä¸ªå‘¨æœŸç»“æŸ
         S_cnt <= 3'd0;
       else S_cnt <= S_cnt + 3'd1;
     end else if ({S_csi_valid_2d, S_csi_valid_1d, I_csi_valid} == 3'b000) S_cnt <= 3'd0;

@@ -14,7 +14,7 @@ caused by the use of their own products.
 @Author      :   XiaoQingquan 
 @Time        :   2024/10 
 version:     :   1.0
-@Description :   Ê¹ÓÃBRAM½øĞĞFIFOÕûºÏ£¬²¢ÇÒ²»Ó°ÏìÏÂÒ»Ö¡µÄÊı¾İ´«Êä
+@Description :   ä½¿ç”¨BRAMè¿›è¡ŒFIFOæ•´åˆï¼Œå¹¶ä¸”ä¸å½±å“ä¸‹ä¸€å¸§çš„æ•°æ®ä¼ è¾“
 *****************************************************************/
 
 
@@ -22,7 +22,7 @@ module zhenghe#(
     parameter [12:0] IMG_WIDTH  = 640,
     parameter [12:0] IMG_HEIGHT = 480,
     parameter [8:0]  DATA_WIDTH = 96 ,
-    parameter [8:0]  data_complete_delay = 50 //Ã¿ĞĞBRAMÍê³ÉÊı¾İ´«ÊäºóÓëÕâĞĞ×îºóÒ»¸öÊı¾İµÄ¾àÀë
+    parameter [8:0]  data_complete_delay = 50 //æ¯è¡ŒBRAMå®Œæˆæ•°æ®ä¼ è¾“åä¸è¿™è¡Œæœ€åä¸€ä¸ªæ•°æ®çš„è·ç¦»
 ) 
 (
     input                   I_clk  ,
@@ -56,7 +56,7 @@ module zhenghe#(
     reg          flag_valid_first;
     reg  [15:0]  cnt_first;
     reg  [15:0]  valid_width;
-    ////ÎªÁË·½±ã¶ÔºóĞøµÄĞÅºÅ½øĞĞºÏÀíµÄ´¦Àí£¬ÔÚ´Ë¶Ô²¿·ÖĞÅºÅ½øĞĞ´òÅÄ²Ù×÷
+    ////ä¸ºäº†æ–¹ä¾¿å¯¹åç»­çš„ä¿¡å·è¿›è¡Œåˆç†çš„å¤„ç†ï¼Œåœ¨æ­¤å¯¹éƒ¨åˆ†ä¿¡å·è¿›è¡Œæ‰“æ‹æ“ä½œ
     always @(posedge I_clk or negedge I_rst_n) begin
         if(!I_rst_n) begin
             valid_r0   <= 0;
@@ -77,7 +77,7 @@ module zhenghe#(
         end
     end  
     
-    ////ÒÔÃ¿Ö¡µÄµÚÒ»ĞĞµÄÊı¾İ³¤¶È×÷ÎªVALID_WIDTH£¬ÎªÁË·ÀÖ¹¿ÉÄÜµÄ´íÎó£¬Ã¿Ò»Ö¡¶¼¸üĞÂÒ»´Î¡£
+    ////ä»¥æ¯å¸§çš„ç¬¬ä¸€è¡Œçš„æ•°æ®é•¿åº¦ä½œä¸ºVALID_WIDTHï¼Œä¸ºäº†é˜²æ­¢å¯èƒ½çš„é”™è¯¯ï¼Œæ¯ä¸€å¸§éƒ½æ›´æ–°ä¸€æ¬¡ã€‚
     always @(posedge I_clk or negedge I_rst_n) begin
         if(!I_rst_n) 
             flag_valid_first <= 0;
@@ -102,7 +102,7 @@ module zhenghe#(
             valid_width <= cnt_first;
     end
 
-    ////¼ÆÊıĞĞÊı
+    ////è®¡æ•°è¡Œæ•°
     always @(posedge I_clk or negedge I_rst_n) begin
         if(!I_rst_n || I_tuser) 
             y_cnt <= 0;
@@ -110,7 +110,7 @@ module zhenghe#(
             y_cnt <= y_cnt + 1;
     end
     
-    //´ÓÃ¿ĞĞµÄµÚÒ»¸öÊı¾İµ½ÕâĞĞµÄ×îºóÒ»¸öÊı¾İ£¬flag_valid_d0´¦ÓÚ¸ßµçÆ½
+    //ä»æ¯è¡Œçš„ç¬¬ä¸€ä¸ªæ•°æ®åˆ°è¿™è¡Œçš„æœ€åä¸€ä¸ªæ•°æ®ï¼Œflag_valid_d0å¤„äºé«˜ç”µå¹³
     always @(posedge I_clk or negedge I_rst_n) begin
         if(!I_rst_n) 
             flag_valid_d0 <= 0;
@@ -120,7 +120,7 @@ module zhenghe#(
             flag_valid_d0 <= 1;
     end
     
-    //´ÓÃ¿ĞĞµÄ×îºóÒ»¸öÊı¾İµ½ÏÂÒ»ĞĞµÄµÚÒ»¸öÊı¾İ£¬flag_valid_d1´¦ÓÚ¸ßµçÆ½
+    //ä»æ¯è¡Œçš„æœ€åä¸€ä¸ªæ•°æ®åˆ°ä¸‹ä¸€è¡Œçš„ç¬¬ä¸€ä¸ªæ•°æ®ï¼Œflag_valid_d1å¤„äºé«˜ç”µå¹³
     always @(posedge I_clk or negedge I_rst_n) begin
         if(!I_rst_n || I_tuser ) 
             flag_valid_d1 <= 0;
@@ -145,7 +145,7 @@ module zhenghe#(
     
     assign rd_valid = (x_cnt < rd_valid_width_d1) && (x_cnt > rd_valid_width_d0);
     
-    //////A¶Ë¿Ú
+    //////Aç«¯å£
     always @(posedge I_clk or negedge I_rst_n) begin
         if(!I_rst_n || I_tuser) begin
             addra <= 0;
@@ -155,7 +155,7 @@ module zhenghe#(
         end
     end
 
-    //////B¶Ë¿Ú
+    //////Bç«¯å£
     always @(posedge I_clk or negedge I_rst_n) begin
         if(!I_rst_n || I_tuser) begin
             addrb <= 0;

@@ -59,12 +59,12 @@ module BLC #(
         BLACK_LEVEL_OFFSET
         always @(posedge I_clk)begin 
             if (I_tvalid) begin
-                // Ö´ÐÐºÚµçÆ½½ÃÕý£¬·ÀÖ¹³öÏÖ¸ºÊý
+                // æ‰§è¡Œé»‘ç”µå¹³çŸ«æ­£ï¼Œé˜²æ­¢å‡ºçŽ°è´Ÿæ•°
                 if (I_blc_data[i] > black_level_offset[i]) begin
                     data_out[i] <= I_blc_data[i] - black_level_offset[i];
                 end 
                 else begin
-                    data_out[i] <= 10'd0; // ½«½á¹û²Ã¼ôÎª0£¬·ÀÖ¹¸ºÊý
+                    data_out[i] <= 10'd0; // å°†ç»“æžœè£å‰ªä¸º0ï¼Œé˜²æ­¢è´Ÿæ•°
                 end
             end
         end

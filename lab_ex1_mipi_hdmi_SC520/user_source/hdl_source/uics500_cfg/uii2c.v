@@ -28,72 +28,72 @@
 *8) _s state mechine
 *********************************************************************/
 
-/*******************************I2C¿ØÖÆÆ÷ MASTER*********************
---ÒÔÏÂÊÇÃ×Áª¿ÍÉè¼ÆµÄI2C×ÜÏßMASTER¿ØÖÆÆ÷
---1.´úÂë¼ò½à£¬Õ¼ÓÃ¼«ÉÙÂß¼­×ÊÔ´£¬´úÂë½á¹¹ÇåÎú£¬Âß¼­Éè¼ÆÑÏ½÷
---2.Ê¹ÓÃ·½±ã£¬Ö»ĞèÒª°Ñ·¢ËÍµÄÊı¾İ·ÅÈë¼Ä´æÆ÷£¬¾Í¿ÉÒÔ×Ô¶¯Ö§³ÖÈÎÒâ³¤¶ÈµÄĞ´Êı¾İ
---3.Ê¹ÓÃ·½±ã£¬Ö»ĞèÒª°Ñ¶ÁµÄÊı¾İ¸æÖª¿ØÖÆÆ÷£¬¾Í¿ÉÒÔ×Ô¶¯Ö§³ÖÈÎÒâ³¤¶ÈµÄ¶ÁÊı¾İ
---4.1.1°æ±¾£¬Éı¼¶ÁËO_iic_bus_error±êÖ¾ĞÅºÅ£¬µ±×ÜÏßĞ´²Ù×÷Ã»ÓĞACK·µ»Ø£¬ÉèÖÃO_iic_bus_error£¬¿ÉÒÔÍ¨¹ı¹Û²ìO_iic_bus_error²é¿´×ÜÏßÊÇ·ñÓĞ´íÎó
+/*******************************I2Cæ§åˆ¶å™¨ MASTER*********************
+--ä»¥ä¸‹æ˜¯ç±³è”å®¢è®¾è®¡çš„I2Cæ€»çº¿MASTERæ§åˆ¶å™¨
+--1.ä»£ç ç®€æ´ï¼Œå ç”¨æå°‘é€»è¾‘èµ„æºï¼Œä»£ç ç»“æ„æ¸…æ™°ï¼Œé€»è¾‘è®¾è®¡ä¸¥è°¨
+--2.ä½¿ç”¨æ–¹ä¾¿ï¼Œåªéœ€è¦æŠŠå‘é€çš„æ•°æ®æ”¾å…¥å¯„å­˜å™¨ï¼Œå°±å¯ä»¥è‡ªåŠ¨æ”¯æŒä»»æ„é•¿åº¦çš„å†™æ•°æ®
+--3.ä½¿ç”¨æ–¹ä¾¿ï¼Œåªéœ€è¦æŠŠè¯»çš„æ•°æ®å‘ŠçŸ¥æ§åˆ¶å™¨ï¼Œå°±å¯ä»¥è‡ªåŠ¨æ”¯æŒä»»æ„é•¿åº¦çš„è¯»æ•°æ®
+--4.1.1ç‰ˆæœ¬ï¼Œå‡çº§äº†O_iic_bus_erroræ ‡å¿—ä¿¡å·ï¼Œå½“æ€»çº¿å†™æ“ä½œæ²¡æœ‰ACKè¿”å›ï¼Œè®¾ç½®O_iic_bus_errorï¼Œå¯ä»¥é€šè¿‡è§‚å¯ŸO_iic_bus_erroræŸ¥çœ‹æ€»çº¿æ˜¯å¦æœ‰é”™è¯¯
 *********************************************************************/
 
-`timescale 1ns / 1ns //·ÂÕæ¿Ì¶È/¾«¶È
+`timescale 1ns / 1ns //ä»¿çœŸåˆ»åº¦/ç²¾åº¦
 
 module uii2c#
 (
-parameter integer WMEN_LEN = 8'd0,//Ğ´³¤¶È£¬ÒÔ×Ö½ÚÎªµ¥Î»£¬°üº¬Æ÷¼şµØÖ·
-parameter integer RMEN_LEN = 8'd0,//¶Á³¤¶È£¬ÒÔ×Ö½ÚÎªµ¥Î»£¬²»°üº¬Æ÷¼şµØÖ·
-parameter integer CLK_DIV  = 16'd499// I2CÊ±ÖÓ·ÖÆµÏµÊı
+parameter integer WMEN_LEN = 8'd0,//å†™é•¿åº¦ï¼Œä»¥å­—èŠ‚ä¸ºå•ä½ï¼ŒåŒ…å«å™¨ä»¶åœ°å€
+parameter integer RMEN_LEN = 8'd0,//è¯»é•¿åº¦ï¼Œä»¥å­—èŠ‚ä¸ºå•ä½ï¼Œä¸åŒ…å«å™¨ä»¶åœ°å€
+parameter integer CLK_DIV  = 16'd499// I2Cæ—¶é’Ÿåˆ†é¢‘ç³»æ•°
 )
 (
-input  wire I_clk,//ÏµÍ³Ê±ÖÓÊäÈë
-input  wire I_rstn,//ÏµÍ³¸´Î»£¬µÍµçÆ½ÓĞĞ§
-output reg  O_iic_scl = 1'b0,//I2CÊ±ÖÓSCL
-inout  wire IO_iic_sda,//I2C Êı¾İ×ÜÏß
-input  wire [WMEN_LEN*8-1'b1:0]I_wr_data,//Ğ´Êı¾İ¼Ä´æÆ÷£¬ÆäÖĞWMEN_LENÉèÖÃÁË×î´óÖ§³ÖµÄÊı¾İ×Ö½ÚÊı£¬Ô½´óÕ¼ÓÃµÄFPGA×ÊÔ´Ô½¶à
-input  wire [7:0]I_wr_cnt,//Ğ´Êı¾İ¼ÆÊıÆ÷£¬´ú±íĞ´ÁË¶àÉÙ¸ö×Ö½Ú
-output reg  [RMEN_LEN*8-1'b1:0]O_rd_data = 0,//¶ÁÊı¾İ¼Ä´æÆ÷£¬ÆäÖĞRMEN_LENÉèÖÃÁË×î´óÖ§³ÖµÄÊı¾İ×Ö½ÚÊı£¬Ô½´óÕ¼ÓÃµÄFPGA×ÊÔ´Ô½¶à
-input  wire [7:0]I_rd_cnt,//¶ÁÊı¾İ¼ÆÊıÆ÷
-input  wire I_iic_req,//I_iic_req == 1 Ê¹ÄÜI2C´«Êä
-input  wire I_iic_mode,//I_iic_mode = 1 Ëæ»ú¶Á   I_iic_mode = 0 ¶Áµ±Ç°¼Ä´æÆ÷»òÕßÒ³¶Á
-output reg  O_iic_busy = 1'b0,//I2C¿ØÖÆÆ÷Ã¦
-output reg  O_iic_bus_error, //I2C×ÜÏß£¬ÎŞ·¨¶Áµ½ÕıÈ·ACK³ö´í
+input  wire I_clk,//ç³»ç»Ÿæ—¶é’Ÿè¾“å…¥
+input  wire I_rstn,//ç³»ç»Ÿå¤ä½ï¼Œä½ç”µå¹³æœ‰æ•ˆ
+output reg  O_iic_scl = 1'b0,//I2Cæ—¶é’ŸSCL
+inout  wire IO_iic_sda,//I2C æ•°æ®æ€»çº¿
+input  wire [WMEN_LEN*8-1'b1:0]I_wr_data,//å†™æ•°æ®å¯„å­˜å™¨ï¼Œå…¶ä¸­WMEN_LENè®¾ç½®äº†æœ€å¤§æ”¯æŒçš„æ•°æ®å­—èŠ‚æ•°ï¼Œè¶Šå¤§å ç”¨çš„FPGAèµ„æºè¶Šå¤š
+input  wire [7:0]I_wr_cnt,//å†™æ•°æ®è®¡æ•°å™¨ï¼Œä»£è¡¨å†™äº†å¤šå°‘ä¸ªå­—èŠ‚
+output reg  [RMEN_LEN*8-1'b1:0]O_rd_data = 0,//è¯»æ•°æ®å¯„å­˜å™¨ï¼Œå…¶ä¸­RMEN_LENè®¾ç½®äº†æœ€å¤§æ”¯æŒçš„æ•°æ®å­—èŠ‚æ•°ï¼Œè¶Šå¤§å ç”¨çš„FPGAèµ„æºè¶Šå¤š
+input  wire [7:0]I_rd_cnt,//è¯»æ•°æ®è®¡æ•°å™¨
+input  wire I_iic_req,//I_iic_req == 1 ä½¿èƒ½I2Cä¼ è¾“
+input  wire I_iic_mode,//I_iic_mode = 1 éšæœºè¯»   I_iic_mode = 0 è¯»å½“å‰å¯„å­˜å™¨æˆ–è€…é¡µè¯»
+output reg  O_iic_busy = 1'b0,//I2Cæ§åˆ¶å™¨å¿™
+output reg  O_iic_bus_error, //I2Cæ€»çº¿ï¼Œæ— æ³•è¯»åˆ°æ­£ç¡®ACKå‡ºé”™
 output reg  IO_iic_sda_dg
 );
 
-localparam IDLE    = 4'd0;//I2C ×ÜÏß¿ÕÏĞ×´Ì¬
-localparam START   = 4'd1;//I2C ×ÜÏßÆô¶¯
-localparam W_WAIT  = 4'd2;//I2C ×ÜÏßµÈ´ıĞ´Íê³É
-localparam W_ACK   = 4'd3;//I2C ×ÜÏßµÈ´ıĞ´WACK
-localparam R_WAIT  = 4'd4;//I2C ×ÜÏßµÈ´ı¶ÁÍê³É 
-localparam R_ACK   = 4'd5;//I2C ×ÜÏßµÈ´ı¶ÁRACK 
-localparam STOP1   = 4'd6;//I2C ×ÜÏß²úÉúÍ£Ö¹Î»
-localparam STOP2   = 4'd7;//I2C ×ÜÏß²úÉúÍ£Ö¹Î»   
+localparam IDLE    = 4'd0;//I2C æ€»çº¿ç©ºé—²çŠ¶æ€
+localparam START   = 4'd1;//I2C æ€»çº¿å¯åŠ¨
+localparam W_WAIT  = 4'd2;//I2C æ€»çº¿ç­‰å¾…å†™å®Œæˆ
+localparam W_ACK   = 4'd3;//I2C æ€»çº¿ç­‰å¾…å†™WACK
+localparam R_WAIT  = 4'd4;//I2C æ€»çº¿ç­‰å¾…è¯»å®Œæˆ 
+localparam R_ACK   = 4'd5;//I2C æ€»çº¿ç­‰å¾…è¯»RACK 
+localparam STOP1   = 4'd6;//I2C æ€»çº¿äº§ç”Ÿåœæ­¢ä½
+localparam STOP2   = 4'd7;//I2C æ€»çº¿äº§ç”Ÿåœæ­¢ä½   
 
 localparam SCL_DIV = CLK_DIV/2;
 
-localparam OFFSET = SCL_DIV - SCL_DIV/4;//ÉèÖÃI2C×ÜÏßµÄSCLÊ±ÖÓµÄÆ«ÒÆ£¬ÒÔÂú×ãSCLºÍSDAµÄÊ±ĞòÒªÇó£¬Íâ²¿µÄSCLÑÓ³ÙÄÚ²¿µÄ°ëÖÜÆÚµÄËÄ·ÖÖ®Èı
+localparam OFFSET = SCL_DIV - SCL_DIV/4;//è®¾ç½®I2Cæ€»çº¿çš„SCLæ—¶é’Ÿçš„åç§»ï¼Œä»¥æ»¡è¶³SCLå’ŒSDAçš„æ—¶åºè¦æ±‚ï¼Œå¤–éƒ¨çš„SCLå»¶è¿Ÿå†…éƒ¨çš„åŠå‘¨æœŸçš„å››åˆ†ä¹‹ä¸‰
 
-reg [2:0] IIC_S = 4'd0; //I2C ×´Ì¬»ú
+reg [2:0] IIC_S = 4'd0; //I2C çŠ¶æ€æœº
 //generate  scl
-reg [15:0] clkdiv = 16'd0;   //I2C Ê±ÖÓ·ÖÆµ¼Ä´æÆ÷
-reg scl_r 	   = 1'b1;       //I2C¿ØÖÆÆ÷µÄSCLÄÚ²¿Ê±ÖÓ
-reg sda_o 	   = 1'b0;       //I2C¿ØÖÆÆ÷µÄSDA
-reg scl_clk    = 1'b0;       //I2C¿ØÖÆÆ÷ÄÚ²¿SCLÊ±ÖÓ£¬ÓëÍâ²¿Ê±ÖÓ´æÔÚOFFSET²ÎÊıÉèÖÃµÄÏàÎ»Æ«ÒÆ
-reg [7:0] sda_r = 8'd0;      //·¢ËÍ¼Ä´æÆ÷
-reg [7:0] sda_i_r = 8'd0;    //½ÓÊÕ¼Ä´æÆ÷
-reg [7:0] wcnt = 8'd0;       //·¢ËÍÊı¾İ¼ÆÊıÆ÷£¬ÒÔbyteÎªµ¥Î»
-reg [7:0] rcnt = 8'd0;       //½ÓÊÕÊı¾İ¼ÆÊıÆ÷£¬ÒÔbyteÎªµ¥Î»
-reg [2:0] bcnt = 3'd0;       //bit¼ÆÊıÆ÷
-reg  rd_req = 1'b0;          //¶ÁÇëÇó£¬µ±ÅĞ¶Ïµ½ĞèÒª¶ÁÊı¾İ£¬ÄÚ²¿×´Ì¬»úÖĞÉèÖÃ1
-wire sda_i;                  //sda ÊäÈë
-wire scl_offset;             //scl Ê±ÖÓÆ«ÒÆ¿ØÖÆ
+reg [15:0] clkdiv = 16'd0;   //I2C æ—¶é’Ÿåˆ†é¢‘å¯„å­˜å™¨
+reg scl_r 	   = 1'b1;       //I2Cæ§åˆ¶å™¨çš„SCLå†…éƒ¨æ—¶é’Ÿ
+reg sda_o 	   = 1'b0;       //I2Cæ§åˆ¶å™¨çš„SDA
+reg scl_clk    = 1'b0;       //I2Cæ§åˆ¶å™¨å†…éƒ¨SCLæ—¶é’Ÿï¼Œä¸å¤–éƒ¨æ—¶é’Ÿå­˜åœ¨OFFSETå‚æ•°è®¾ç½®çš„ç›¸ä½åç§»
+reg [7:0] sda_r = 8'd0;      //å‘é€å¯„å­˜å™¨
+reg [7:0] sda_i_r = 8'd0;    //æ¥æ”¶å¯„å­˜å™¨
+reg [7:0] wcnt = 8'd0;       //å‘é€æ•°æ®è®¡æ•°å™¨ï¼Œä»¥byteä¸ºå•ä½
+reg [7:0] rcnt = 8'd0;       //æ¥æ”¶æ•°æ®è®¡æ•°å™¨ï¼Œä»¥byteä¸ºå•ä½
+reg [2:0] bcnt = 3'd0;       //bitè®¡æ•°å™¨
+reg  rd_req = 1'b0;          //è¯»è¯·æ±‚ï¼Œå½“åˆ¤æ–­åˆ°éœ€è¦è¯»æ•°æ®ï¼Œå†…éƒ¨çŠ¶æ€æœºä¸­è®¾ç½®1
+wire sda_i;                  //sda è¾“å…¥
+wire scl_offset;             //scl æ—¶é’Ÿåç§»æ§åˆ¶
 
-assign  sda_i   = IO_iic_sda ;  //¶Á×ÜÏß 
-assign  IO_iic_sda = (sda_o == 1'b0) ?  1'b0 : 1'bz;    //Ğ´×ÜÏß£¬1'bz´ú±í¸ß×è£¬I2CÍâ²¿Í¨¹ıÉÏÀ­µç×è£¬ÊµÏÖ×ÜÏßµÄ¸ßµçÆ½
+assign  sda_i   = IO_iic_sda ;  //è¯»æ€»çº¿ 
+assign  IO_iic_sda = (sda_o == 1'b0) ?  1'b0 : 1'bz;    //å†™æ€»çº¿ï¼Œ1'bzä»£è¡¨é«˜é˜»ï¼ŒI2Cå¤–éƒ¨é€šè¿‡ä¸Šæ‹‰ç”µé˜»ï¼Œå®ç°æ€»çº¿çš„é«˜ç”µå¹³
 
 //PULLUP PULLUP_inst (.O(iic_sda));
 
-//XILINX I2C ÓÃIOBUFÊµÏÖ¿ØÖÆ
+//XILINX I2C ç”¨IOBUFå®ç°æ§åˆ¶
 //IOBUF #(
 //.DRIVE(12), // Specify the output drive strength
 //.IBUF_LOW_PWR("TRUE"),  // Low Power - "TRUE", High Performance = "FALSE" 
@@ -106,7 +106,7 @@ assign  IO_iic_sda = (sda_o == 1'b0) ?  1'b0 : 1'bz;    //Ğ´×ÜÏß£¬1'bz´ú±í¸ß×è£¬
 //.T(sda_o)     // 3-state enable input, high=input, low=output
 //);
 
-//scl Ê±ÖÓ·ÖÆµÆ÷
+//scl æ—¶é’Ÿåˆ†é¢‘å™¨
 always@(posedge I_clk)
     if(clkdiv < SCL_DIV)    
         clkdiv <= clkdiv + 1'b1;
@@ -116,13 +116,13 @@ always@(posedge I_clk)
     end
 
 
-assign  scl_offset  = (clkdiv == OFFSET);//ÉèÖÃscl_offsetµÄÊ±¼ä²ÎÊı
-always @(posedge I_clk) O_iic_scl <=  scl_offset ?  scl_r : O_iic_scl; //O_iic_sclÑÓ³Ùscl_offsetÊ±¼äµÄscl_r
+assign  scl_offset  = (clkdiv == OFFSET);//è®¾ç½®scl_offsetçš„æ—¶é—´å‚æ•°
+always @(posedge I_clk) O_iic_scl <=  scl_offset ?  scl_r : O_iic_scl; //O_iic_sclå»¶è¿Ÿscl_offsetæ—¶é—´çš„scl_r
 
-//²É¼¯I2C Êı¾İ×ÜÏßsda
+//é‡‡é›†I2C æ•°æ®æ€»çº¿sda
 always @(posedge I_clk) IO_iic_sda_dg <= sda_i;  
 
-//µ±IIC_S×´Ì¬»ú´¦ÓÚ£¬Í¬Ê±¿ÕÏĞ×´Ì¬£¬ÉèÖÃSCLÎª¸ßµçÆ½£¬Í¬Ê±Ò²ÊÇ¿ÕÏĞ£¬Í£Ö¹×´Ì¬£¬ÓÃÓÚ²úÉúÆğÊ¼Î»ºÍÍ£Ö¹Î»Ê±Ğò£¬·ñÔò¼Ä´æscl_clkÊ±ÖÓ
+//å½“IIC_SçŠ¶æ€æœºå¤„äºï¼ŒåŒæ—¶ç©ºé—²çŠ¶æ€ï¼Œè®¾ç½®SCLä¸ºé«˜ç”µå¹³ï¼ŒåŒæ—¶ä¹Ÿæ˜¯ç©ºé—²ï¼Œåœæ­¢çŠ¶æ€ï¼Œç”¨äºäº§ç”Ÿèµ·å§‹ä½å’Œåœæ­¢ä½æ—¶åºï¼Œå¦åˆ™å¯„å­˜scl_clkæ—¶é’Ÿ
 always @(*) 
     if(IIC_S == IDLE || IIC_S == STOP1 || IIC_S == STOP2)
         scl_r <= 1'b1;
@@ -130,63 +130,63 @@ always @(*)
         scl_r <= scl_clk;
   
 
-//µ±½øÈëIIC_S×´Ì¬ÎªÆô¶¯¡¢Í£Ö¹ÉèÖÃsda=0£¬½áºÏscl²úÉúÆğÊ¼Î»£¬»òÕß(IIC_S == R_ACK && (rcnt != I_rd_cnt) sda=0£¬ÓÃÓÚ²úÉú¶Á²Ù×÷µÄACK
+//å½“è¿›å…¥IIC_SçŠ¶æ€ä¸ºå¯åŠ¨ã€åœæ­¢è®¾ç½®sda=0ï¼Œç»“åˆscläº§ç”Ÿèµ·å§‹ä½ï¼Œæˆ–è€…(IIC_S == R_ACK && (rcnt != I_rd_cnt) sda=0ï¼Œç”¨äºäº§ç”Ÿè¯»æ“ä½œçš„ACK
 always @(*) 
     if(IIC_S == START || IIC_S == STOP1 || (IIC_S == R_ACK && (rcnt != I_rd_cnt)))
         sda_o <= 1'b0;
     else if(IIC_S == W_WAIT)
         sda_o <= sda_r[7]; 
-    else  sda_o <= 1'b1; //·ñÔòÆäËû×´Ì¬¶¼Îª1£¬µ±(IIC_S == R_ACK && (rcnt == I_rd_cnt) ²úÉúÒ»¸öNACK 
+    else  sda_o <= 1'b1; //å¦åˆ™å…¶ä»–çŠ¶æ€éƒ½ä¸º1ï¼Œå½“(IIC_S == R_ACK && (rcnt == I_rd_cnt) äº§ç”Ÿä¸€ä¸ªNACK 
 
-//I2CÊı¾İ·¢ËÍÄ£¿é£¬ËùÓĞµÄĞ´Êı¾İ¶¼Í¨¹ı´ËÄ£¿é·¢ËÍ
+//I2Cæ•°æ®å‘é€æ¨¡å—ï¼Œæ‰€æœ‰çš„å†™æ•°æ®éƒ½é€šè¿‡æ­¤æ¨¡å—å‘é€
 always @(posedge scl_clk) 
-    if(IIC_S == W_ACK || IIC_S == START)begin//IIC_S=STARTºÍW_ACK£¬°ÑĞèÒª·¢ËÍµÄÊı¾İ£¬¼Ä´æµ½sda_r
-        sda_r <= I_wr_data[(wcnt*8) +: 8];//¼Ä´æĞèÒª·¢·¢ËÍµÄÊı¾İµ½sda_r
-        if( rd_req ) sda_r <= {I_wr_data[7:1],1'b1};//¶ÔÓÚ¶Á²Ù×÷£¬rd_reqÓÉÄÚ²¿´úÂë²úÉú£¬µ±Ğ´ÍêµÚÒ»¸öÊı¾İ(Æ÷¼şµØÖ·)£¬ºóÍ¨¹ıÅĞ¶ÏI_rd_cnt£¬È·ÈÏÊÇ·ñÊı¾İĞèÒª¶Á
+    if(IIC_S == W_ACK || IIC_S == START)begin//IIC_S=STARTå’ŒW_ACKï¼ŒæŠŠéœ€è¦å‘é€çš„æ•°æ®ï¼Œå¯„å­˜åˆ°sda_r
+        sda_r <= I_wr_data[(wcnt*8) +: 8];//å¯„å­˜éœ€è¦å‘å‘é€çš„æ•°æ®åˆ°sda_r
+        if( rd_req ) sda_r <= {I_wr_data[7:1],1'b1};//å¯¹äºè¯»æ“ä½œï¼Œrd_reqç”±å†…éƒ¨ä»£ç äº§ç”Ÿï¼Œå½“å†™å®Œç¬¬ä¸€ä¸ªæ•°æ®(å™¨ä»¶åœ°å€)ï¼Œåé€šè¿‡åˆ¤æ–­I_rd_cntï¼Œç¡®è®¤æ˜¯å¦æ•°æ®éœ€è¦è¯»
     end
-    else if(IIC_S == W_WAIT)//µ±W_WAT×´Ì¬£¬Í¨¹ıÒÆÎ»²Ù×÷£¬°ÑÊı¾İ·¢ËÍµ½Êı¾İ×ÜÏß
-        sda_r <= {sda_r[6:0],1'b1};//ÒÆÎ»²Ù×÷
+    else if(IIC_S == W_WAIT)//å½“W_WATçŠ¶æ€ï¼Œé€šè¿‡ç§»ä½æ“ä½œï¼ŒæŠŠæ•°æ®å‘é€åˆ°æ•°æ®æ€»çº¿
+        sda_r <= {sda_r[6:0],1'b1};//ç§»ä½æ“ä½œ
     else 
         sda_r <= sda_r;
 
 //sda data bus read and hold data to O_rd_data register when IIC_S=R_ACK
-//I2CÊı¾İ½ÓÊÕÄ£¿é£¬I2C¶ÁÆÚ¼ä£¬°ÑÊı¾İÍ¨¹ıÒÆÎ»²Ù×÷£¬ÒÆÈëO_rd_data
+//I2Cæ•°æ®æ¥æ”¶æ¨¡å—ï¼ŒI2Cè¯»æœŸé—´ï¼ŒæŠŠæ•°æ®é€šè¿‡ç§»ä½æ“ä½œï¼Œç§»å…¥O_rd_data
 always @(negedge scl_clk)begin
-    if(IIC_S == R_WAIT ) //µ±IIC_S == R_WAIT ||IIC_S == W_ACK(Èç¹û¶Á²Ù×÷£¬µÚ1¸öBITÊÇW_ACKÕâ¸ö×´Ì¬¶Á)Æô¶¯ÒÆÎ»²Ù×÷
+    if(IIC_S == R_WAIT ) //å½“IIC_S == R_WAIT ||IIC_S == W_ACK(å¦‚æœè¯»æ“ä½œï¼Œç¬¬1ä¸ªBITæ˜¯W_ACKè¿™ä¸ªçŠ¶æ€è¯»)å¯åŠ¨ç§»ä½æ“ä½œ
         sda_i_r <= {sda_i_r[6:0],sda_i};
-    else if(IIC_S == R_ACK)//µ±IIC_S == R_ACK,Íê³ÉÒ»¸öBYTE¶Á£¬°ÑÊı¾İ±£´æµ½O_rd_data
+    else if(IIC_S == R_ACK)//å½“IIC_S == R_ACK,å®Œæˆä¸€ä¸ªBYTEè¯»ï¼ŒæŠŠæ•°æ®ä¿å­˜åˆ°O_rd_data
         O_rd_data[((rcnt-1'b1)*8) +: 8] <= sda_i_r[7:0];
-    else if(IIC_S == IDLE)//¿ÕÏĞ×´Ì¬£¬ÖØÖÃsda_i_r
+    else if(IIC_S == IDLE)//ç©ºé—²çŠ¶æ€ï¼Œé‡ç½®sda_i_r
         sda_i_r <= 8'd0;
 end
 
-//×ÜÏßÃ¦×´Ì¬
+//æ€»çº¿å¿™çŠ¶æ€
 always @(posedge scl_clk or negedge I_rstn )begin
 	if(I_rstn == 1'b0)
     	O_iic_busy <= 1'b0; 
 	else begin
-    	if((I_iic_req == 1'b1 || rd_req == 1'b1 || O_iic_bus_error))//I_iic_req == 1'b1 || rd_req == 1'b1×ÜÏß½øÈëÃ¦×´Ì¬
+    	if((I_iic_req == 1'b1 || rd_req == 1'b1 || O_iic_bus_error))//I_iic_req == 1'b1 || rd_req == 1'b1æ€»çº¿è¿›å…¥å¿™çŠ¶æ€
     	    O_iic_busy <= 1'b1; 
         else if(IIC_S == IDLE)
         	O_iic_busy <= 1'b0;
     end 		
 end
 
-//×ÜÏßÃ¦×´Ì¬
+//æ€»çº¿å¿™çŠ¶æ€
 always @(negedge scl_clk or negedge I_rstn )begin
 	if(I_rstn == 1'b0)
     	O_iic_bus_error <= 1'b0;  	
 	else begin
-    	if(IIC_S  == W_ACK && sda_i == 1'b1)//I_iic_req == 1'b1 || rd_req == 1'b1×ÜÏß½øÈëÃ¦×´Ì¬
+    	if(IIC_S  == W_ACK && sda_i == 1'b1)//I_iic_req == 1'b1 || rd_req == 1'b1æ€»çº¿è¿›å…¥å¿™çŠ¶æ€
     	    O_iic_bus_error <= 1'b1; 
         else if(I_iic_req == 0)
         	O_iic_bus_error <= 1'b0;
     end 		
 end
 
-//I2C Master¿ØÖÆÆ÷×´Ì¬»ú
+//I2C Masteræ§åˆ¶å™¨çŠ¶æ€æœº
 always @(posedge scl_clk or negedge I_rstn )begin
-		if(I_rstn == 1'b0)begin //Òì²½¸´Î»£¬¸´Î»Ïà¹Ø¼Ä´æÆ÷
+		if(I_rstn == 1'b0)begin //å¼‚æ­¥å¤ä½ï¼Œå¤ä½ç›¸å…³å¯„å­˜å™¨
            wcnt 	<= 8'd0;
            rcnt 	<= 8'd0;
            rd_req 	<= 1'b0;   
@@ -194,64 +194,64 @@ always @(posedge scl_clk or negedge I_rstn )begin
         end
         else begin
         case(IIC_S) //sda = 1 scl =1
-        IDLE:begin//ÔÚ¿ÕÏĞ×´Ì¬£¬sda=1 scl=1 
-           if(I_iic_req == 1'b1 || rd_req == 1'b1) //µ±I_iic_req == 1'b1´ú±íÆô¶¯´«Êä µ± rd_req == 1'b1 ´ú±í¶Á²Ù×÷ĞèÒª²úÉúrepeated start ÖØ¸´Æô¶¯  
-              IIC_S  <= START; //½øÈëSTART×´Ì¬
+        IDLE:begin//åœ¨ç©ºé—²çŠ¶æ€ï¼Œsda=1 scl=1 
+           if(I_iic_req == 1'b1 || rd_req == 1'b1) //å½“I_iic_req == 1'b1ä»£è¡¨å¯åŠ¨ä¼ è¾“ å½“ rd_req == 1'b1 ä»£è¡¨è¯»æ“ä½œéœ€è¦äº§ç”Ÿrepeated start é‡å¤å¯åŠ¨  
+              IIC_S  <= START; //è¿›å…¥STARTçŠ¶æ€
            else begin
-              wcnt <= 8'd0; //¸´Î»¼ÆÊıÆ÷
-              rcnt <= 8'd0; //¸´Î»¼ÆÊıÆ÷
+              wcnt <= 8'd0; //å¤ä½è®¡æ•°å™¨
+              rcnt <= 8'd0; //å¤ä½è®¡æ•°å™¨
            end
         end
-        START:begin //Õâ¸ö×´Ì¬£¬Ç°ÃæµÄ´úÂë£¬ÏÈÉèÖÃsda = 0£¬scl_offset²ÎÊıÉèÖÃÁËscl_clkÊ±ÖÓµÄÆ«ÒÆ£¬Ö®ºó scl_clk =0 ¼´scl =0 ²úÉúÆğÊ¼Î»»òÕßÖØ¸´ÆğÊ¼Î»
-           bcnt <= 3'd7; //ÉèÖÃbcntµÄ³õÖµ         
-           IIC_S  <= W_WAIT;//½øÈë·¢ËÍµÈ´ı
+        START:begin //è¿™ä¸ªçŠ¶æ€ï¼Œå‰é¢çš„ä»£ç ï¼Œå…ˆè®¾ç½®sda = 0ï¼Œscl_offsetå‚æ•°è®¾ç½®äº†scl_clkæ—¶é’Ÿçš„åç§»ï¼Œä¹‹å scl_clk =0 å³scl =0 äº§ç”Ÿèµ·å§‹ä½æˆ–è€…é‡å¤èµ·å§‹ä½
+           bcnt <= 3'd7; //è®¾ç½®bcntçš„åˆå€¼         
+           IIC_S  <= W_WAIT;//è¿›å…¥å‘é€ç­‰å¾…
         end           
-        W_WAIT://µÈ´ı·¢ËÍÍê³É£¬ÕâÀï·¢ËÍ8bits Êı¾İ£¬Ğ´Æ÷¼şµØÖ·£¬Ğ´¼Ä´æÆ÷µØÖ·£¬Ğ´Êı¾İ£¬¶¼ÔÚÕâ¸ö×´Ì¬Íê³É
+        W_WAIT://ç­‰å¾…å‘é€å®Œæˆï¼Œè¿™é‡Œå‘é€8bits æ•°æ®ï¼Œå†™å™¨ä»¶åœ°å€ï¼Œå†™å¯„å­˜å™¨åœ°å€ï¼Œå†™æ•°æ®ï¼Œéƒ½åœ¨è¿™ä¸ªçŠ¶æ€å®Œæˆ
         begin
-           if(bcnt > 3'd0)//Èç¹û8bitsÃ»·¢ËÍÍê£¬Ö±µ½·¢ËÍÍê
-               bcnt  <= bcnt - 1'b1; //bcnt¼ÆÊıÆ÷£¬Ã¿·¢ËÍ1bit¼õ1
-           else begin //8bits·¢ËÍÍê±Ï
-               wcnt <= wcnt + 1'b1; //wcnt¼ÆÊıÆ÷£¬ÓÃÓÚ¼ÇÂ¼ÒÑ¾­Ğ´ÁË¶àÉÙ×Ö½Ú
-               IIC_S  <= W_ACK;//½øÈëW_ACK×´Ì¬
+           if(bcnt > 3'd0)//å¦‚æœ8bitsæ²¡å‘é€å®Œï¼Œç›´åˆ°å‘é€å®Œ
+               bcnt  <= bcnt - 1'b1; //bcntè®¡æ•°å™¨ï¼Œæ¯å‘é€1bitå‡1
+           else begin //8bitså‘é€å®Œæ¯•
+               wcnt <= wcnt + 1'b1; //wcntè®¡æ•°å™¨ï¼Œç”¨äºè®°å½•å·²ç»å†™äº†å¤šå°‘å­—èŠ‚
+               IIC_S  <= W_ACK;//è¿›å…¥W_ACKçŠ¶æ€
            end
         end 
-        W_ACK://µÈ´ıWACK£¬´Ë½×¶Î£¬Ò²ÅĞ¶ÏÊÇ·ñÓĞ¶Á²Ù×÷
+        W_ACK://ç­‰å¾…WACKï¼Œæ­¤é˜¶æ®µï¼Œä¹Ÿåˆ¤æ–­æ˜¯å¦æœ‰è¯»æ“ä½œ
         begin 
-           if(wcnt < I_wr_cnt)begin //ÅĞ¶ÏÊÇ·ñËùÓĞÊı¾İ·¢ËÍ(Ğ´)Íê³É
-              bcnt <= 3'd7; //Èç¹ûÃ»ÓĞĞ´Íê£¬ÖØÖÃbcnt
-              IIC_S <= W_WAIT;//¼ÌĞø»Øµ½W_WAITµÈ´ıÊı¾İ·¢ËÍ(Ğ´)Íê³É
+           if(wcnt < I_wr_cnt)begin //åˆ¤æ–­æ˜¯å¦æ‰€æœ‰æ•°æ®å‘é€(å†™)å®Œæˆ
+              bcnt <= 3'd7; //å¦‚æœæ²¡æœ‰å†™å®Œï¼Œé‡ç½®bcnt
+              IIC_S <= W_WAIT;//ç»§ç»­å›åˆ°W_WAITç­‰å¾…æ•°æ®å‘é€(å†™)å®Œæˆ
            end
-           else if(I_rd_cnt > 3'd0)begin//I_rd_cnt > 0´ú±íÓĞÊı¾İĞèÒª¶Á£¬I_rd_cnt¾ö¶¨ÁËÓĞ¶àÉÙÊı¾İĞèÒª¶Á
-              if(rd_req == 1'b0 && I_iic_mode == 1'b1)begin //¶ÔÓÚµÚÒ»´ÎĞ´ÍêÆ÷¼şµØÖ·£¬Èç¹ûI_iic_mode==1´ú±íÖ§³ÖËæ»ú¶Á
-                  rd_req <= 1'b1;//ÉèÖÃrd_req=1£¬ÇëÇó¶Á²Ù×÷
-                  IIC_S <= IDLE; //ÉèÖÃ×´Ì¬½øÈëIDLE£¬¸ù¾İrd_reqµÄÖµ»áÖØĞÂ²úÉúÒ»´ÎÎª¶Á²Ù×÷½øĞĞµÄrepeatedÖØ¸´start
+           else if(I_rd_cnt > 3'd0)begin//I_rd_cnt > 0ä»£è¡¨æœ‰æ•°æ®éœ€è¦è¯»ï¼ŒI_rd_cntå†³å®šäº†æœ‰å¤šå°‘æ•°æ®éœ€è¦è¯»
+              if(rd_req == 1'b0 && I_iic_mode == 1'b1)begin //å¯¹äºç¬¬ä¸€æ¬¡å†™å®Œå™¨ä»¶åœ°å€ï¼Œå¦‚æœI_iic_mode==1ä»£è¡¨æ”¯æŒéšæœºè¯»
+                  rd_req <= 1'b1;//è®¾ç½®rd_req=1ï¼Œè¯·æ±‚è¯»æ“ä½œ
+                  IIC_S <= IDLE; //è®¾ç½®çŠ¶æ€è¿›å…¥IDLEï¼Œæ ¹æ®rd_reqçš„å€¼ä¼šé‡æ–°äº§ç”Ÿä¸€æ¬¡ä¸ºè¯»æ“ä½œè¿›è¡Œçš„repeatedé‡å¤start
               end
-              else //Èç¹ûÖ®Ç°ÒÑ¾­Íê³ÉÁËrepeatedÖØ¸´start£¬ÄÇÃ´¶Á²Ù×÷½øÈë¶ÁÊı¾İ½×¶Î
-                  IIC_S <= R_WAIT;//½øÈë¶ÁµÈ´ı
-                  bcnt <= 3'd7;//ÉèÖÃbcntµÄ³õÖµ  
+              else //å¦‚æœä¹‹å‰å·²ç»å®Œæˆäº†repeatedé‡å¤startï¼Œé‚£ä¹ˆè¯»æ“ä½œè¿›å…¥è¯»æ•°æ®é˜¶æ®µ
+                  IIC_S <= R_WAIT;//è¿›å…¥è¯»ç­‰å¾…
+                  bcnt <= 3'd7;//è®¾ç½®bcntçš„åˆå€¼  
            end
-           else //Èç¹ûËùÓĞµÄ·¢ËÍÍê³É£¬Ò²Ã»Êı¾İĞèÒª¶Á£¬½øÈëÍ£Ö¹×´Ì¬
+           else //å¦‚æœæ‰€æœ‰çš„å‘é€å®Œæˆï¼Œä¹Ÿæ²¡æ•°æ®éœ€è¦è¯»ï¼Œè¿›å…¥åœæ­¢çŠ¶æ€
               IIC_S <= STOP1; 
         end  
-        R_WAIT://µÈ´ı¶Á²Ù×÷Íê³É
+        R_WAIT://ç­‰å¾…è¯»æ“ä½œå®Œæˆ
         begin
-           rd_req <= 1'b0;//ÖØÖÃ¶ÁÇëÇórd_req=0
-           bcnt  <= bcnt - 1'b1; //bit ¼ÆÊıÆ÷
-           if(bcnt == 3'd0)begin //µ±8bitsÊı¾İ¶ÁÍê
-              rcnt <= (rcnt < I_rd_cnt) ? (rcnt + 1'b1) : rcnt;//ÅĞ¶ÏÊÇ·ñ»¹ÓĞÊı¾İĞèÒª¶Á
-              IIC_S  <= R_ACK;//½øÈëR_ACK
+           rd_req <= 1'b0;//é‡ç½®è¯»è¯·æ±‚rd_req=0
+           bcnt  <= bcnt - 1'b1; //bit è®¡æ•°å™¨
+           if(bcnt == 3'd0)begin //å½“8bitsæ•°æ®è¯»å®Œ
+              rcnt <= (rcnt < I_rd_cnt) ? (rcnt + 1'b1) : rcnt;//åˆ¤æ–­æ˜¯å¦è¿˜æœ‰æ•°æ®éœ€è¦è¯»
+              IIC_S  <= R_ACK;//è¿›å…¥R_ACK
            end
         end
-        R_ACK://R_ACK×´Ì¬²úÉúNACK
+        R_ACK://R_ACKçŠ¶æ€äº§ç”ŸNACK
         begin
-           bcnt <= 3'd7;//ÖØÖÃ¶ÁÇëÇóbcnt¼ÆÊıÆ÷
-           IIC_S <= (rcnt < I_rd_cnt) ? R_WAIT : STOP1; //Èç¹ûËùÓĞÊı¾İ¶ÁÍê£¬½øÈëÍ£Ö¹×´Ì¬
+           bcnt <= 3'd7;//é‡ç½®è¯»è¯·æ±‚bcntè®¡æ•°å™¨
+           IIC_S <= (rcnt < I_rd_cnt) ? R_WAIT : STOP1; //å¦‚æœæ‰€æœ‰æ•°æ®è¯»å®Œï¼Œè¿›å…¥åœæ­¢çŠ¶æ€
         end  
-        STOP1:begin//²úÉúÍ£Ö¹Î» sda = 0 scl = 1
+        STOP1:begin//äº§ç”Ÿåœæ­¢ä½ sda = 0 scl = 1
             rd_req 	<= 1'b0;              
             IIC_S <= STOP2;
         end
-        STOP2://²úÉúÍ£Ö¹Î»  sda = 1 scl = 1
+        STOP2://äº§ç”Ÿåœæ­¢ä½  sda = 1 scl = 1
             IIC_S <= IDLE;          
         default:
             IIC_S <= IDLE;
