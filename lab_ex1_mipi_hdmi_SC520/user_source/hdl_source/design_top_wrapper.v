@@ -12,6 +12,8 @@ module design_top_wrapper (
     inout wire [1:0]  I_button,
 
     output wire       O_screen_pwm,
+    output wire       O_led1,          // 1 Hz 心跳灯，LED1，高电平点亮
+
     output wire       O_tmds_ch0_p,
     output wire       O_tmds_ch1_p,
     output wire       O_tmds_ch2_p,
@@ -219,6 +221,91 @@ module design_top_wrapper (
 
     assign O_screen_pwm = 1'b1;
     assign S_video_out_vsync = ~S_hdmi_vsync;
+
+    // ------------------------------------------------------------------
+    // 1 Hz 心跳指示灯 + 1 秒计时脉冲：LED1（FPGA 引脚 D10，高电平点亮）
+    // 系统时钟 50 MHz，半周期 = 50e6 / (2 x 1 Hz) = 25,000,000 个时钟
+    // ------------------------------------------------------------------
+    localparam integer LED_HALF_PERIOD = 25000000;
+
+    reg [24:0] S_led_cnt;
+    reg        S_led_1hz;
+    reg        S_tick_500ms;              // 电平每 0.5 秒翻转一次（宽电平，跨域安全）
+
+    always @(posedge I_sys_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_led_cnt <= 25'd0;
+            S_led_1hz <= 1'b0;
+            S_tick_500ms <= 1'b0;
+        end
+        else begin
+            if (S_led_cnt >= LED_HALF_PERIOD - 1) begin
+                S_led_cnt <= 25'd0;
+                S_led_1hz <= ~S_led_1hz;
+                // 用翻转而不是单周期脉冲：CSI 字节时钟(约 34.5MHz)比 50MHz 还慢，
+                // 20ns 的单周期脉冲会被漏采，导致计数窗口漏清零、帧率翻倍。
+                S_tick_500ms <= ~S_tick_500ms;
+            end
+            else begin
+                S_led_cnt <= S_led_cnt + 25'd1;
+            end
+        end
+    end
+
+    assign O_led1 = S_led_1hz;
+
+    // ------------------------------------------------------------------
+    // 帧率统计：以 ISP 输出帧起始(I_tuser)计帧，每 0.5 秒锁存一次
+    // 0.5 秒内帧数 x2 即为帧率；计数在 CSI 时钟域，
+    // 经 toggle 握手搬到 HDMI 像素时钟域显示
+    // ------------------------------------------------------------------
+    reg [2:0]  S_tick_500ms_sync;
+    reg [9:0]  S_fps_cnt;
+    reg [9:0]  S_fps_latched;
+    reg        S_fps_toggle;
+    reg [2:0]  S_fps_tog_sync;
+    reg [9:0]  S_fps_value;
+
+    // 电平翻转跨域后按边沿检测，每个 0.5 s 恰好给出一次事件
+    wire S_tick_500ms_csi = S_tick_500ms_sync[1] ^ S_tick_500ms_sync[2];
+
+    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+        if (!S_rst_n) begin
+            S_tick_500ms_sync <= 3'b000;
+            S_fps_cnt         <= 10'd0;
+            S_fps_latched     <= 10'd0;
+            S_fps_toggle      <= 1'b0;
+        end
+        else begin
+            S_tick_500ms_sync <= {S_tick_500ms_sync[1:0], S_tick_500ms};
+
+            if (S_tick_500ms_csi) begin
+                // 0.5 秒帧数 x2 = 帧率，超过 999 截顶
+                if (S_fps_cnt > 10'd499)
+                    S_fps_latched <= 10'd999;
+                else
+                    S_fps_latched <= {S_fps_cnt[8:0], 1'b0};
+                S_fps_cnt    <= 10'd0;
+                S_fps_toggle <= ~S_fps_toggle;
+            end
+            else if (S_ISP_O_tuser) begin
+                if (S_fps_cnt != 10'd999)
+                    S_fps_cnt <= S_fps_cnt + 10'd1;
+            end
+        end
+    end
+
+    always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin
+        if (!S_hdmi_rst_n) begin
+            S_fps_tog_sync <= 3'b000;
+            S_fps_value    <= 10'd0;
+        end
+        else begin
+            S_fps_tog_sync <= {S_fps_tog_sync[1:0], S_fps_toggle};
+            if (S_fps_tog_sync[1] ^ S_fps_tog_sync[2])
+                S_fps_value <= S_fps_latched;
+        end
+    end
 	
 	
     assign S_rst_n 		= S_pll_lock;
@@ -657,7 +744,7 @@ uial2axis #(
 .IMG_WIDTH(1280),
 .IMG_HEIGHT(720),
 .INPUT_DATA_WIDTH(40)
-) 
+)
 u_uial2axis (
 .I_native_clk(S_csi_rx_clk),
 .I_rst_n     (S_rst_n),
@@ -861,8 +948,8 @@ isp_top u_isp_top (
         .V_OFFSET   ( 0    ),
         .IMG_WIDTH  ( 1280 ),
         .IMG_HEIGHT ( 720  ),
-        // Normal camera display.  Set to 4 only when the MIPI diagnostic
-        // full-screen status page is needed.
+        // 正常画面显示（含 ISP 边缘检测结果）。
+        // 需要 MIPI 链路诊断时改为 4，显示全屏彩色状态页。
         .DEBUG_MODE ( 0    )
     )u_hdmi_mixer(
         .I_clk           ( S_hdmi_pixel_clk   ),
@@ -873,6 +960,7 @@ isp_top u_isp_top (
         .I_video_user    ( S_hdmi_user        ),
         .I_video_last    ( S_hdmi_last        ),
         .I_debug_status  ( S_hdmi_debug_status),
+        .I_fps_value     ( S_fps_value      ),
         .O_video_rd_en   ( S_hdmi_window_rd_en),
         .I_video_rd_data ( S_video_rd_data    ),
         .O_hdmi_vsync    ( S_hdmi_out_vsync   ),

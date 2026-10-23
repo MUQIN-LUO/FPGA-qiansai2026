@@ -200,8 +200,9 @@ module uicfgcs520 #(
         .IO_iic_sda_dg()
     );
 
-    // SC520CS true 1280x720@60 mode.  This test keeps the factory 0x89 table
-    // but clears register 0x3222 to verify Free-run operation.
+    // SC520CS 1280x720@60 模式（原厂 setting），MCLK = 24 MHz。
+    // 需要 Full 模式时换成 uics520reg_full_2560x1920_30，
+    // 并同步修改 MCLK、宽高、行长/行数检查及 SDC 约束。
     uics520reg_720p60 u_init_regs (
         .REG_INDEX(reg_index),
         .REG_DATA(init_reg_data),
