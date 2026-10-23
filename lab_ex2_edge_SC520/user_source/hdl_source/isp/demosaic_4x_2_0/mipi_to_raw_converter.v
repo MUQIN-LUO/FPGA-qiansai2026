@@ -29,7 +29,7 @@ module mipi_to_raw_converter
     input                          I_raw_tuser ,
     output                         I_raw_tready,
     
-    // Êä³öRAW10Êı¾İ
+    // è¾“å‡ºRAW10æ•°æ®
     output  [31:0]                 O_raw_tdata ,
     output                         O_raw_tlast ,
     output                         O_raw_tvalid,
@@ -42,7 +42,7 @@ module mipi_to_raw_converter
     reg            I_tvalid_r0;
     reg    [31:0]  raw_data_r0;
 
-    ///´Ë´¦¶ÔÓÚÃ¿¸öRAW10È¡¸ß8Î»ÊÇÒòÎª¸ßÎ»Ëù°üº¬µÄÑÕÉ«Êı¾İ¸ü¶à¡£
+    ///æ­¤å¤„å¯¹äºæ¯ä¸ªRAW10å–é«˜8ä½æ˜¯å› ä¸ºé«˜ä½æ‰€åŒ…å«çš„é¢œè‰²æ•°æ®æ›´å¤šã€‚
     always @(posedge I_clk or negedge I_rst_n) begin
         if(!I_rst_n)
             raw_data_r0 <= 0;

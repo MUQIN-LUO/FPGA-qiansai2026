@@ -29,7 +29,7 @@
 *********************************************************************/
 
 /*******************************uicfg7611***************************
---1.ADV7611Ğ¾Æ¬ÅäÖÃÇı¶¯³ÌĞò
+--1.ADV7611èŠ¯ç‰‡é…ç½®é©±åŠ¨ç¨‹åº
 *********************************************************************/
 
 `timescale 1ns / 1ns
@@ -39,42 +39,42 @@ module uicfgcs500#
 parameter	 CLK_DIV  = 16'd999
 )
 (
-input  wire             I_clk,  //ÏµÍ³Ê±ÖÓÊäÈë
-input  wire             I_rst_n,  //ÏµÍ³¸´Î»ÊäÈë
-input  wire             I_ae_req,//ÉãÏñÍ·AE¿ØÖÆ
+input  wire             I_clk,  //ç³»ç»Ÿæ—¶é’Ÿè¾“å…¥
+input  wire             I_rst_n,  //ç³»ç»Ÿå¤ä½è¾“å…¥
+input  wire             I_ae_req,//æ‘„åƒå¤´AEæ§åˆ¶
 input  wire	 [15:0] 	I_ae,
 input  wire	 [15:0] 	I_ag,
-output wire             O_cam_scl, //I2C×ÜÏß£¬SCLÊ±ÖÓ
-inout  wire             IO_cam_sda, //I2C×ÜÏß£¬SDAÊı¾İ
-output reg              O_cfg_done, //ÅäÖÃÍê³É
+output wire             O_cam_scl, //I2Cæ€»çº¿ï¼ŒSCLæ—¶é’Ÿ
+inout  wire             IO_cam_sda, //I2Cæ€»çº¿ï¼ŒSDAæ•°æ®
+output reg              O_cfg_done, //é…ç½®å®Œæˆ
 output reg              O_ae_cfg_done
 );	
 
 localparam CAM_ID = 8'h6C;
-//ÄÚ²¿¼ÆÊıÆ÷²úÉúÒ»¸öÑÓ³Ù¸´Î»
+//å†…éƒ¨è®¡æ•°å™¨äº§ç”Ÿä¸€ä¸ªå»¶è¿Ÿå¤ä½
 reg[7:0] rst_cnt =0;
 always@(posedge I_clk or negedge I_rst_n)  
-    if(I_rst_n == 1'b0) //¸´Î»³õÊ¼»¯¼Ä´æÆ÷
+    if(I_rst_n == 1'b0) //å¤ä½åˆå§‹åŒ–å¯„å­˜å™¨
         rst_cnt<= 8'd0; 
     else if(rst_cnt[7] == 1'b0)
        rst_cnt <= rst_cnt + 1'b1; 
     else 
        rst_cnt <= rst_cnt; 
 
-reg  iic_req;//ÇëÇó²Ù×÷I2C¿ØÖÆÆ÷ĞÅºÅ
-wire ic_busy; //I2C¿ØÖÆÆ÷Ã¦ĞÅºÅ 
-reg  [31:0] wr_data;     //Ğ´Êı¾İ¼Ä´æÆ÷
-reg  [1 :0] TS_S = 2'd0; //×´Ì¬»ú¼Ä´æÆ÷
-reg  [8 :0] reg_index;   //¼Ä´æË÷Òı
-wire [23:0] REG_DATA;    //¼Ä´æÆ÷Êı¾İ
-wire [23:0] REG_DATA_REG;    //¼Ä´æÆ÷Êı¾İ
-wire [23:0] REG_DATA_AE;    //¼Ä´æÆ÷Êı¾İ
-wire [8 :0] REG_SIZE;    //¼Ä´æÆ÷ÊıÁ¿
-wire [8 :0] REG_SIZE_REG;    //¼Ä´æÆ÷ÊıÁ¿
-wire [8 :0] REG_SIZE_AE;    //¼Ä´æÆ÷ÊıÁ¿
+reg  iic_req;//è¯·æ±‚æ“ä½œI2Cæ§åˆ¶å™¨ä¿¡å·
+wire ic_busy; //I2Cæ§åˆ¶å™¨å¿™ä¿¡å· 
+reg  [31:0] wr_data;     //å†™æ•°æ®å¯„å­˜å™¨
+reg  [1 :0] TS_S = 2'd0; //çŠ¶æ€æœºå¯„å­˜å™¨
+reg  [8 :0] reg_index;   //å¯„å­˜ç´¢å¼•
+wire [23:0] REG_DATA;    //å¯„å­˜å™¨æ•°æ®
+wire [23:0] REG_DATA_REG;    //å¯„å­˜å™¨æ•°æ®
+wire [23:0] REG_DATA_AE;    //å¯„å­˜å™¨æ•°æ®
+wire [8 :0] REG_SIZE;    //å¯„å­˜å™¨æ•°é‡
+wire [8 :0] REG_SIZE_REG;    //å¯„å­˜å™¨æ•°é‡
+wire [8 :0] REG_SIZE_AE;    //å¯„å­˜å™¨æ•°é‡
 
 always@(posedge I_clk ) begin 
-    if(rst_cnt[7] == 1'b0)begin //¸´Î»³õÊ¼»¯¼Ä´æÆ÷
+    if(rst_cnt[7] == 1'b0)begin //å¤ä½åˆå§‹åŒ–å¯„å­˜å™¨
         reg_index  <= 9'd0;
         iic_req    <= 1'b0;
         wr_data    <= 32'd0;
@@ -84,33 +84,33 @@ always@(posedge I_clk ) begin
     end
     else begin
         case(TS_S)
-        0:if(reg_index == REG_SIZE && O_cfg_done == 1'b0) begin//Èç¹ûÅäÖÃÍê³É
-            O_cfg_done <= 1'b1;       //ÉèÖÃ cfg_done±ê×¼
+        0:if(reg_index == REG_SIZE && O_cfg_done == 1'b0) begin//å¦‚æœé…ç½®å®Œæˆ
+            O_cfg_done <= 1'b1;       //è®¾ç½® cfg_doneæ ‡å‡†
         end 
-        else if(reg_index == REG_SIZE && O_ae_cfg_done == 1'b0) begin//Èç¹ûÅäÖÃÍê³É
-            O_ae_cfg_done <= 1'b1;       //ÉèÖÃ cfg_done±ê×¼
+        else if(reg_index == REG_SIZE && O_ae_cfg_done == 1'b0) begin//å¦‚æœé…ç½®å®Œæˆ
+            O_ae_cfg_done <= 1'b1;       //è®¾ç½® cfg_doneæ ‡å‡†
         end 
         else if(I_ae_req)begin
             O_ae_cfg_done <= 0;
             reg_index   <= 0;
         end
         else if((O_cfg_done&O_ae_cfg_done) == 1'b0)
-            TS_S <= 2'd1;           //ÏÂÒ»¸ö×´Ì¬
-        1:if(!iic_busy)begin        //µ±×ÜÏß·ÇÃ¦£¬²Å¿ÉÒÔ²Ù×÷I2C¿ØÖÆÆ÷
-            iic_req  <= 1'b1;       //ÇëÇó²Ù×÷I2C¿ØÖÆÆ÷
-			wr_data[7  :0] <= CAM_ID;           //Æ÷¼şµØÖ·   
-			wr_data[15 :8] <= REG_DATA[23:16];  //¼Ä´æÆ÷µØÖ·-¸ß8bit    
-			wr_data[23:16] <= REG_DATA[15: 8];  //¼Ä´æÆ÷µØÖ·-µÍ8bit  
-            wr_data[31:24] <= REG_DATA[7 : 0];  //¼Ä´æÆ÷Êı¾İ
-            TS_S      <= 2'd2; //ÏÂÒ»¸ö×´Ì¬
+            TS_S <= 2'd1;           //ä¸‹ä¸€ä¸ªçŠ¶æ€
+        1:if(!iic_busy)begin        //å½“æ€»çº¿éå¿™ï¼Œæ‰å¯ä»¥æ“ä½œI2Cæ§åˆ¶å™¨
+            iic_req  <= 1'b1;       //è¯·æ±‚æ“ä½œI2Cæ§åˆ¶å™¨
+			wr_data[7  :0] <= CAM_ID;           //å™¨ä»¶åœ°å€   
+			wr_data[15 :8] <= REG_DATA[23:16];  //å¯„å­˜å™¨åœ°å€-é«˜8bit    
+			wr_data[23:16] <= REG_DATA[15: 8];  //å¯„å­˜å™¨åœ°å€-ä½8bit  
+            wr_data[31:24] <= REG_DATA[7 : 0];  //å¯„å­˜å™¨æ•°æ®
+            TS_S      <= 2'd2; //ä¸‹ä¸€ä¸ªçŠ¶æ€
         end    
         2:if(iic_busy)begin
-             iic_req  <= 1'b0;  //ÖØÖÃ iic_req =0
-             TS_S     <= 2'd3;  //ÏÂÒ»¸ö×´Ì¬
+             iic_req  <= 1'b0;  //é‡ç½® iic_req =0
+             TS_S     <= 2'd3;  //ä¸‹ä¸€ä¸ªçŠ¶æ€
         end
-        3:if(!iic_busy)begin  //µ±×ÜÏß·ÇÃ¦£¬²Å¿ÉÒÔ²Ù×÷I2C¿ØÖÆÆ÷ 
-			reg_index<= reg_index + 1'b1;//¼Ä´æÆ÷Ë÷Òı¼Ó1
-			TS_S    <= 2'd0;//»Øµ½³õÊ¼×´Ì¬
+        3:if(!iic_busy)begin  //å½“æ€»çº¿éå¿™ï¼Œæ‰å¯ä»¥æ“ä½œI2Cæ§åˆ¶å™¨ 
+			reg_index<= reg_index + 1'b1;//å¯„å­˜å™¨ç´¢å¼•åŠ 1
+			TS_S    <= 2'd0;//å›åˆ°åˆå§‹çŠ¶æ€
         end 
         endcase
    end
@@ -119,45 +119,45 @@ end
 assign REG_DATA = (O_cfg_done == 0) ? REG_DATA_REG : REG_DATA_AE;
 assign REG_SIZE = (O_cfg_done == 0) ? REG_SIZE_REG : REG_SIZE_AE;
 
-//Àı»¯I2C¿ØÖÆÄ£¿é
+//ä¾‹åŒ–I2Cæ§åˆ¶æ¨¡å—
 uii2c#
 (
-.WMEN_LEN(4),     //×î´óÖ§³ÖÒ»´ÎĞ´Èë4BYTE(°üº¬Æ÷¼şµØÖ·)
-.RMEN_LEN(1),     //×î´óÖ§³ÖÒ»´Î¶Á³ö1BYTE
-.CLK_DIV(CLK_DIV) //100KHZ I2C×ÜÏßÊ±ÖÓ
+.WMEN_LEN(4),     //æœ€å¤§æ”¯æŒä¸€æ¬¡å†™å…¥4BYTE(åŒ…å«å™¨ä»¶åœ°å€)
+.RMEN_LEN(1),     //æœ€å¤§æ”¯æŒä¸€æ¬¡è¯»å‡º1BYTE
+.CLK_DIV(CLK_DIV) //100KHZ I2Cæ€»çº¿æ—¶é’Ÿ
 )
 uii2c_inst
 (
-.I_clk(I_clk),//ÏµÍ³Ê±ÖÓ
-.I_rstn(rst_cnt[7]),//ÏµÍ³¸´Î»
-.O_iic_scl(O_cam_scl),//I2C SCL×ÜÏßÊ±ÖÓ
-.IO_iic_sda(IO_cam_sda),//I2C SDAÊı¾İ×ÜÏß
-.I_wr_data(wr_data),//Ğ´Êı¾İ¼Ä´æÆ÷
-.I_wr_cnt(8'd4),//ĞèÒªĞ´µÄÊı¾İBYTES
-.O_rd_data(),   //¶ÁÊı¾İ¼Ä´æÆ÷
-.I_rd_cnt(8'd0),//ĞèÒª¶ÁµÄÊı¾İBYTES
-.I_iic_mode(1'b0),//¶ÁÄ£Ê½ÉèÖÃ
-.I_iic_req(iic_req),//I2C¿ØÖÆÆ÷ÇëÇó
-.O_iic_busy(iic_busy)//I2C¿ØÖÆÆ÷Ã¦
+.I_clk(I_clk),//ç³»ç»Ÿæ—¶é’Ÿ
+.I_rstn(rst_cnt[7]),//ç³»ç»Ÿå¤ä½
+.O_iic_scl(O_cam_scl),//I2C SCLæ€»çº¿æ—¶é’Ÿ
+.IO_iic_sda(IO_cam_sda),//I2C SDAæ•°æ®æ€»çº¿
+.I_wr_data(wr_data),//å†™æ•°æ®å¯„å­˜å™¨
+.I_wr_cnt(8'd4),//éœ€è¦å†™çš„æ•°æ®BYTES
+.O_rd_data(),   //è¯»æ•°æ®å¯„å­˜å™¨
+.I_rd_cnt(8'd0),//éœ€è¦è¯»çš„æ•°æ®BYTES
+.I_iic_mode(1'b0),//è¯»æ¨¡å¼è®¾ç½®
+.I_iic_req(iic_req),//I2Cæ§åˆ¶å™¨è¯·æ±‚
+.O_iic_busy(iic_busy)//I2Cæ§åˆ¶å™¨å¿™
 );
 
 
-//Àı»¯CAMµÄ¼Ä´æÆ÷ÅäÖÃ±í
+//ä¾‹åŒ–CAMçš„å¯„å­˜å™¨é…ç½®è¡¨
 uics500reg uics500reg_inst
 (
-.REG_SIZE(REG_SIZE_REG),  //¼Ä´æÆ÷ÊıÁ¿
-.REG_INDEX(reg_index),    //¼Ä´æË÷Òı
-.REG_DATA(REG_DATA_REG)   //¼Ä´æÆ÷Êı¾İ
+.REG_SIZE(REG_SIZE_REG),  //å¯„å­˜å™¨æ•°é‡
+.REG_INDEX(reg_index),    //å¯„å­˜ç´¢å¼•
+.REG_DATA(REG_DATA_REG)   //å¯„å­˜å™¨æ•°æ®
 );  
 
 wire 	[15:0] 	w_gain_val; 
 SC500GainTbl gain_tbl (.I_clk(I_clk), .I_rstn(rst_cnt[7]==1'b0), .I(I_ag - 16), .O(w_gain_val));
-//Àı»¯CAM AEµÄ¼Ä´æÆ÷ÅäÖÃ±í
+//ä¾‹åŒ–CAM AEçš„å¯„å­˜å™¨é…ç½®è¡¨
 uics500regAE uics500regAE_inst
 (
-.REG_SIZE(REG_SIZE_AE),  //¼Ä´æÆ÷ÊıÁ¿
-.REG_INDEX(reg_index),//¼Ä´æË÷Òı
-.REG_DATA(REG_DATA_AE),   //¼Ä´æÆ÷Êı¾İ
+.REG_SIZE(REG_SIZE_AE),  //å¯„å­˜å™¨æ•°é‡
+.REG_INDEX(reg_index),//å¯„å­˜ç´¢å¼•
+.REG_DATA(REG_DATA_AE),   //å¯„å­˜å™¨æ•°æ®
 .I_AG(w_gain_val),
 .I_AE(I_ae)
 );  

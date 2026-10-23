@@ -29,9 +29,16 @@ wire         m_aixs_tvalid;  //synthesis keep
   wire         awb_O_tvalid;  //synthesis keep 
   wire         awb_O_tready;  //synthesis keep 
 
-  wire         awb_O_tuser_128;  //synthesis keep 
-  wire         awb_O_tvalid_128;  //synthesis keep 
-  wire [127:0] awb_O_tdata_128;  //synthesis keep 
+  wire         awb_O_tuser_128;  //synthesis keep
+  wire         awb_O_tvalid_128;  //synthesis keep
+  wire [127:0] awb_O_tdata_128;  //synthesis keep
+
+  // 边缘检测输出（96bit 流）
+  wire         edge_O_tlast;     //synthesis keep
+  wire         edge_O_tuser;     //synthesis keep
+  wire [ 95:0] edge_O_tdata;     //synthesis keep
+  wire         edge_O_tvalid;    //synthesis keep
+  wire         edge_O_tready;    //synthesis keep
 
   assign awb_O_tready = O_tready;
   assign O_tdata  = awb_O_tdata_128;
@@ -92,13 +99,57 @@ awb #(
     .O_tready(awb_O_tready)
 );
 
+    // 基础要求(2)：Sobel 边缘检测（灰度 -> 行缓存 -> Sobel -> 二值化）
+    // 输入打一拍：AWB 乘法器输出直接进灰度的 3 级加法链会形成 14 级逻辑，
+    // 在 103.52MHz 下违例 -1.221ns，这里隔开一级流水。
+    reg [95:0] ed_tdata_d;
+    reg        ed_tlast_d;
+    reg        ed_tuser_d;
+    reg        ed_tvalid_d;
+
+    always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            ed_tdata_d  <= 96'd0;
+            ed_tlast_d  <= 1'b0;
+            ed_tuser_d  <= 1'b0;
+            ed_tvalid_d <= 1'b0;
+        end
+        else begin
+            ed_tdata_d  <= awb_O_tdata;
+            ed_tlast_d  <= awb_O_tlast;
+            ed_tuser_d  <= awb_O_tuser;
+            ed_tvalid_d <= awb_O_tvalid;
+        end
+    end
+
+    // EDGE_TH 取值 0~2040（|Gx|+|Gy| 的满量程），越大越干净但弱边缘会丢掉。
+    // 原厂默认 80 只有 3.9%，噪点会全部通过；128 约 6.3%。
+    edge_detect_96 #(
+        .IMG_WIDTH (1280),
+        .IMG_HEIGHT(720 ),
+        .EDGE_TH   (11'd128)
+    ) u_edge_detect_96 (
+        .I_clk   (axi4s_video_aclk),
+        .I_rst_n (I_rst_n),
+        .I_tlast (ed_tlast_d),
+        .I_tuser (ed_tuser_d),
+        .I_tdata (ed_tdata_d),
+        .I_tvalid(ed_tvalid_d),
+        .I_tready(awb_O_tready),
+        .O_tlast (edge_O_tlast),
+        .O_tuser (edge_O_tuser),
+        .O_tdata (edge_O_tdata),
+        .O_tvalid(edge_O_tvalid),
+        .O_tready(edge_O_tready)
+    );
+
     data_96bit_to_128bit u_data_96bit_to_128bit(
         .I_clk              ( axi4s_video_aclk  ),
         .I_rst_n            ( I_rst_n           ),
-	
-        .I_96b_frame_start  ( awb_O_tuser       ),
-        .I_96b_valid        ( awb_O_tvalid      ),
-        .I_96b_data         ( awb_O_tdata       ),
+
+        .I_96b_frame_start  ( edge_O_tuser      ),
+        .I_96b_valid        ( edge_O_tvalid     ),
+        .I_96b_data         ( edge_O_tdata      ),
 	
         .O_128b_frame_start ( awb_O_tuser_128  	),
         .O_128b_valid       ( awb_O_tvalid_128 	),

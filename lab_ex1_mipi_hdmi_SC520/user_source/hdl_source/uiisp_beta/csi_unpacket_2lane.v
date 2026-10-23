@@ -26,36 +26,36 @@
 *7) _r delay or register
 *8) _s state mechine
 *********************************************************************/
-/*********csi_unpacket_2lane MIPI CSI½âÂë***********
---°æ±¾ºÅ1.0
---MIPI IPÊı¾İ½âÂëÎª32bitÊı¾İÊä³ö¸øÏÂÒ»¼¶Ê¹ÓÃ£¬ÕâÀïĞèÒªÁË½âMIPIĞ­ÒéµÄÊı¾İ¸ñÊ½
+/*********csi_unpacket_2lane MIPI CSIè§£ç ***********
+--ç‰ˆæœ¬å·1.0
+--MIPI IPæ•°æ®è§£ç ä¸º32bitæ•°æ®è¾“å‡ºç»™ä¸‹ä¸€çº§ä½¿ç”¨ï¼Œè¿™é‡Œéœ€è¦äº†è§£MIPIåè®®çš„æ•°æ®æ ¼å¼
 *********************************************************************/
 
 `timescale 1ns / 1ns
 
 module csi_unpacket_2lane 
 (
-input wire          I_clk,  //À´×ÔMIPI ºËµÄÊ±ÖÓ
-input wire          I_rst_n,//Òì²½¸´Î»
+input wire          I_clk,  //æ¥è‡ªMIPI æ ¸çš„æ—¶é’Ÿ
+input wire          I_rst_n,//å¼‚æ­¥å¤ä½
 
-input wire          I_hs_valid,//synthesis keep //À´×ÔMIPIºËµÄÊı¾İÓĞĞ§ĞÅºÅ,ÆäÖĞÒ²°üº¬µÄÊı¾İÀàĞÍ
-input wire[15: 0]   I_hs_data, //synthesis keep //À´×ÔMIPIºËµÄÊı¾İ,ÆäÖĞÒ²°üº¬µÄÊı¾İÀàĞÍÊı¾İ£¬ÕâÀï¶¨Òå2LANE£¬1BYTEÄ£Ê½
+input wire          I_hs_valid,//synthesis keep //æ¥è‡ªMIPIæ ¸çš„æ•°æ®æœ‰æ•ˆä¿¡å·,å…¶ä¸­ä¹ŸåŒ…å«çš„æ•°æ®ç±»å‹
+input wire[15: 0]   I_hs_data, //synthesis keep //æ¥è‡ªMIPIæ ¸çš„æ•°æ®,å…¶ä¸­ä¹ŸåŒ…å«çš„æ•°æ®ç±»å‹æ•°æ®ï¼Œè¿™é‡Œå®šä¹‰2LANEï¼Œ1BYTEæ¨¡å¼
 
-output reg           O_csi_frame_start, //Ö¡ÆğÊ¼£¬1¸öÖÜÆÚÓĞĞ§
-output reg           O_csi_frame_end,   //Ö¡½áÊø£¬1¸öÖÜÆÚÓĞĞ§
-output reg           O_csi_valid, //synthesis keep      //ÓĞĞ§Êı¾İÊä³ö
+output reg           O_csi_frame_start, //å¸§èµ·å§‹ï¼Œ1ä¸ªå‘¨æœŸæœ‰æ•ˆ
+output reg           O_csi_frame_end,   //å¸§ç»“æŸï¼Œ1ä¸ªå‘¨æœŸæœ‰æ•ˆ
+output reg           O_csi_valid, //synthesis keep      //æœ‰æ•ˆæ•°æ®è¾“å‡º
 output reg           O_csi_hs,
-output reg  [31: 0]  O_csi_data   //synthesis keep      //ÓĞĞ§Êı¾İ£¬ÕâÀï¶¨Òå2LANE£¬1BYTEÄ£Ê½
+output reg  [31: 0]  O_csi_data   //synthesis keep      //æœ‰æ•ˆæ•°æ®ï¼Œè¿™é‡Œå®šä¹‰2LANEï¼Œ1BYTEæ¨¡å¼
 );
 
 
-//MIPIÊı¾İÀàĞÍ
-//DT 00 Ö¡ÆğÊ¼°ü
-//DT 01 Ö¡½áÊø°ü
-//DT 02 ĞĞÆğÊ¼°ü
-//DT 03 ĞĞ½áÊø°ü
-//DT 2a 8BITÄ£Ê½ÏÂµÄÊı¾İ³¤°ü
-//DT 2b 10BITÄ£Ê½ÏÂµÄÊı¾İ³¤°ü
+//MIPIæ•°æ®ç±»å‹
+//DT 00 å¸§èµ·å§‹åŒ…
+//DT 01 å¸§ç»“æŸåŒ…
+//DT 02 è¡Œèµ·å§‹åŒ…
+//DT 03 è¡Œç»“æŸåŒ…
+//DT 2a 8BITæ¨¡å¼ä¸‹çš„æ•°æ®é•¿åŒ…
+//DT 2b 10BITæ¨¡å¼ä¸‹çš„æ•°æ®é•¿åŒ…
 
 localparam FRAME_DATA_DT  = 8'h2B;   //RAW10
 //localparam FRAME_DATA_DT  = 8'h2A;     //RAW8
@@ -70,25 +70,25 @@ reg [15:0] S_data_length;      //synthesis keep
 reg        S_data_en;          //synthesis keep        
 reg [15:0] S_data_en_cnt;      //synthesis keep      
 
-assign  S_head_en  = ~S_hs_valid_1d & I_hs_valid;//Ö¡Í·Ê¹ÄÜ
+assign  S_head_en  = ~S_hs_valid_1d & I_hs_valid;//å¸§å¤´ä½¿èƒ½
 
-//I_hs_valid ºÍ I_hs_data ¸÷´ò1ÅÄ
+//I_hs_valid å’Œ I_hs_data å„æ‰“1æ‹
 always @(posedge I_clk) begin 
     S_hs_valid_1d        <= I_hs_valid;
     S_hs_data_1d         <= I_hs_data;
-    S_head_en_1d         <= S_head_en;//Ö¡Í·Ê¹ÄÜ
+    S_head_en_1d         <= S_head_en;//å¸§å¤´ä½¿èƒ½
 end
 
-//Ö¡ÆğÊ¼ÅĞ¶Ï
+//å¸§èµ·å§‹åˆ¤æ–­
 always @(posedge I_clk) 
     O_csi_frame_start <= (S_head_en_1d && S_hs_data_1d[15:8] == FRAME_START_DT);
 
 
-//Ö¡½áÊøÅĞ¶Ï
+//å¸§ç»“æŸåˆ¤æ–­
 always @(posedge I_clk) 
     O_csi_frame_end  <= (S_head_en_1d && S_hs_data_1d[15:8] == FRAME_END_DT);
 
-//»ñÈ¡Êı¾İ³¤¶È
+//è·å–æ•°æ®é•¿åº¦
 always @(posedge I_clk) begin 
     if(I_hs_valid)begin
         if(S_head_en_1d && S_hs_data_1d[15:8] == FRAME_DATA_DT)
@@ -101,7 +101,7 @@ always @(posedge I_clk) begin
 end
 
 
-//Êı¾İÓĞĞ§Ê¹ÄÜ
+//æ•°æ®æœ‰æ•ˆä½¿èƒ½
 always @(posedge I_clk or negedge I_rst_n) begin
     if(!I_rst_n)
         S_data_en <= 1'b0;
@@ -114,7 +114,7 @@ always @(posedge I_clk or negedge I_rst_n) begin
             S_data_en <= S_data_en;
 end
 
-//Êı¾İ³¤¶È¼ÆÊıÆ÷
+//æ•°æ®é•¿åº¦è®¡æ•°å™¨
 always @(posedge I_clk) begin
     if(S_data_en)
         S_data_en_cnt <= S_data_en_cnt + 'd1;
@@ -122,7 +122,7 @@ always @(posedge I_clk) begin
         S_data_en_cnt <= 'd0;
 end
 
-//ÓĞĞ§Êı¾İÍ¬²½Êä³ö,°Ñ2LANEµÄ16bitÊı¾İ×ªÎª32bitÊı¾İ
+//æœ‰æ•ˆæ•°æ®åŒæ­¥è¾“å‡º,æŠŠ2LANEçš„16bitæ•°æ®è½¬ä¸º32bitæ•°æ®
 reg  csi_valid_r;//synthesis keep
 
 always @(posedge I_clk) begin

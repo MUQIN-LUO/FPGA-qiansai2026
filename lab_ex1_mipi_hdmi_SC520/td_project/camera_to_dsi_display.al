@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Project Version="3" Minor="2" Path="D:/TD/TD File/FPGA qiansai/lab_ex1_mipi_hdmi_SC520/lab_ex1_mipi_hdmi_SC520/lab_ex1_mipi_hdmi/td_project">
+<Project Version="3" Minor="2" Path="D:/HX1P35A_Contest_202606/Anlogic/TD6.2.1/bin/FPGA/lab_ex1_mipi_hdmi_SC520/td_project">
     <Project_Created_Time></Project_Created_Time>
     <TD_Encoding>UTF-8</TD_Encoding>
     <TD_Version>6.2.168116</TD_Version>
@@ -326,6 +326,22 @@
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
                     <Attr Name="CompileOrder" Val="55"/>
+                </FileInfo>
+            </File>
+            <File Path="../user_source/hdl_source/isp/edge_detect_96.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="56"/>
+                </FileInfo>
+            </File>
+            <File Path="../user_source/hdl_source/anlogic_logo_rom.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="57"/>
                 </FileInfo>
             </File>
         </Verilog>
