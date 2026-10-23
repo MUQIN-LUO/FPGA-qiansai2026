@@ -9,7 +9,7 @@ module design_top_wrapper (
     output wire       O_cam_24m,
     output wire       O_cam_rst,
       
-    inout wire [1:0]  I_button,
+    inout wire [3:0]  I_button,
 
     output wire       O_screen_pwm,
     output wire       O_led1,          // 1 Hz 心跳灯，LED1，高电平点亮
@@ -253,6 +253,161 @@ module design_top_wrapper (
     end
 
     assign O_led1 = S_led_1hz;
+
+    // ------------------------------------------------------------------
+    // 多算法切换（进阶要求 1）：板载 K1~K4 按键选择算法
+    //   KEY1(D5)  -> 原图 RAW
+    //   KEY2(A9)  -> 边缘 EDGE
+    //   KEY3(B9)  -> 灰度 GRAY
+    //   KEY4(C7)  -> 波普 POP（循环切换 4 种风格）
+    //   按键内部上拉，空闲为 1，按下为 0；20 ms 消抖后取下降沿
+    // ------------------------------------------------------------------
+    localparam integer BTN_DEBOUNCE = 1000000;   // 50 MHz x 20 ms
+
+    reg [3:0]  S_btn_q;          // 同步后的按键电平
+    reg [3:0]  S_btn_st;         // 消抖后的稳定值
+    reg [3:0]  S_btn_st_d;       // 稳定值再打一拍，用于取下降沿
+    reg [19:0] S_btn_cnt0;
+    reg [19:0] S_btn_cnt1;
+    reg [19:0] S_btn_cnt2;
+    reg [19:0] S_btn_cnt3;
+    reg [1:0]  S_mode;           // 0=原图 1=边缘 2=灰度
+
+    wire [3:0] S_btn_press = S_btn_st_d & ~S_btn_st;
+
+    always @(posedge I_sys_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_btn_q     <= 4'b1111;
+            S_btn_st    <= 4'b1111;
+            S_btn_st_d  <= 4'b1111;
+            S_btn_cnt0  <= 20'd0;
+            S_btn_cnt1  <= 20'd0;
+            S_btn_cnt2  <= 20'd0;
+            S_btn_cnt3  <= 20'd0;
+            S_mode      <= 2'd0;
+        end
+        else begin
+            S_btn_q    <= I_button;
+            S_btn_st_d <= S_btn_st;
+
+            // KEY1
+            if (S_btn_q[0] != S_btn_st[0]) begin
+                if (S_btn_cnt0 >= BTN_DEBOUNCE) begin
+                    S_btn_st[0] <= S_btn_q[0];
+                    S_btn_cnt0  <= 20'd0;
+                end
+                else S_btn_cnt0 <= S_btn_cnt0 + 20'd1;
+            end
+            else S_btn_cnt0 <= 20'd0;
+
+            // KEY2
+            if (S_btn_q[1] != S_btn_st[1]) begin
+                if (S_btn_cnt1 >= BTN_DEBOUNCE) begin
+                    S_btn_st[1] <= S_btn_q[1];
+                    S_btn_cnt1  <= 20'd0;
+                end
+                else S_btn_cnt1 <= S_btn_cnt1 + 20'd1;
+            end
+            else S_btn_cnt1 <= 20'd0;
+
+            // KEY3
+            if (S_btn_q[2] != S_btn_st[2]) begin
+                if (S_btn_cnt2 >= BTN_DEBOUNCE) begin
+                    S_btn_st[2] <= S_btn_q[2];
+                    S_btn_cnt2  <= 20'd0;
+                end
+                else S_btn_cnt2 <= S_btn_cnt2 + 20'd1;
+            end
+            else S_btn_cnt2 <= 20'd0;
+
+            // KEY4
+            if (S_btn_q[3] != S_btn_st[3]) begin
+                if (S_btn_cnt3 >= BTN_DEBOUNCE) begin
+                    S_btn_st[3] <= S_btn_q[3];
+                    S_btn_cnt3  <= 20'd0;
+                end
+                else S_btn_cnt3 <= S_btn_cnt3 + 20'd1;
+            end
+            else S_btn_cnt3 <= 20'd0;
+
+            // 直接选择；KEY4 循环
+            if (S_btn_press[0])
+                S_mode <= 2'd0;
+            else if (S_btn_press[1])
+                S_mode <= 2'd1;
+            else if (S_btn_press[2])
+                S_mode <= 2'd2;
+            else if (S_btn_press[3])
+                S_mode <= (S_mode == 2'd3) ? 2'd0 : (S_mode + 2'd1);
+        end
+    end
+
+    // 模式号跨到 CSI 域（ISP 选择通路）与像素域（OSD 显示）
+    reg [1:0] S_mode_csi1, S_mode_csi2;
+    reg [1:0] S_mode_pix1, S_mode_pix2;
+
+    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+        if (!S_rst_n) begin
+            S_mode_csi1 <= 2'd0;
+            S_mode_csi2 <= 2'd0;
+        end
+        else begin
+            S_mode_csi1 <= S_mode;
+            S_mode_csi2 <= S_mode_csi1;
+        end
+    end
+
+    always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin
+        if (!S_hdmi_rst_n) begin
+            S_mode_pix1 <= 2'd0;
+            S_mode_pix2 <= 2'd0;
+        end
+        else begin
+            S_mode_pix1 <= S_mode;
+            S_mode_pix2 <= S_mode_pix1;
+        end
+    end
+
+    // ------------------------------------------------------------------
+    // 波普调色板自动轮换：0.5 s 计时脉冲计 6 次 = 每 3 秒换一套配色
+    //   对应《玛丽莲·梦露》系列"同一张图、多组配色"的表现手法
+    // ------------------------------------------------------------------
+    reg        S_tick_d;
+    reg [2:0]  S_pal_div;
+    reg [1:0]  S_pal;
+    reg [1:0]  S_pal_csi1, S_pal_csi2;
+
+    wire S_tick_evt = S_tick_500ms ^ S_tick_d;
+
+    always @(posedge I_sys_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_tick_d  <= 1'b0;
+            S_pal_div <= 3'd0;
+            S_pal     <= 2'd0;
+        end
+        else begin
+            S_tick_d <= S_tick_500ms;
+            if (S_tick_evt) begin
+                if (S_pal_div == 3'd5) begin
+                    S_pal_div <= 3'd0;
+                    S_pal     <= S_pal + 2'd1;
+                end
+                else
+                    S_pal_div <= S_pal_div + 3'd1;
+            end
+        end
+    end
+
+    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+        if (!S_rst_n) begin
+            S_pal_csi1 <= 2'd0;
+            S_pal_csi2 <= 2'd0;
+        end
+        else begin
+            S_pal_csi1 <= S_pal;
+            S_pal_csi2 <= S_pal_csi1;
+        end
+    end
 
     // ------------------------------------------------------------------
     // 帧率统计：以 ISP 输出帧起始(I_tuser)计帧，每 0.5 秒锁存一次
@@ -635,7 +790,7 @@ module design_top_wrapper (
   ae_set u_ae_set (
       .I_clk(S_24m_clk),
       .I_rst(~S_rst_n),
-      .I_btn({I_button,2'b11}),
+      .I_btn(4'b1111),      // 按键改作算法切换用，AE/AG 保持默认值
       .I_cam_cfg_done(S_cam_cfg_done),
       .I_ae_cfg_done(S_ae_cfg_done),
       .O_ae_req(S_ae_req),
@@ -793,6 +948,8 @@ isp_top u_isp_top (
 .I_tdata         (S_raw_tdata	),
 .I_tvalid        (S_raw_tvalid	),
 .I_tdest         (),
+.I_mode          (S_mode_csi2),
+.I_pal           (S_pal_csi2),
 .O_tready        (S_ISP_O_tready),
 .O_tdata         (S_ISP_O_tdata ),
 .O_tlast         (S_ISP_O_tlast ),
@@ -961,6 +1118,7 @@ isp_top u_isp_top (
         .I_video_last    ( S_hdmi_last        ),
         .I_debug_status  ( S_hdmi_debug_status),
         .I_fps_value     ( S_fps_value      ),
+        .I_mode          ( S_mode_pix2      ),
         .O_video_rd_en   ( S_hdmi_window_rd_en),
         .I_video_rd_data ( S_video_rd_data    ),
         .O_hdmi_vsync    ( S_hdmi_out_vsync   ),

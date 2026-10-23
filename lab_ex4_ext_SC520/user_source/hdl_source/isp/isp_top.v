@@ -6,6 +6,8 @@ module isp_top (
     input [39:0] 	I_tdata			,
     input 			I_tvalid		,
     input [9:0] 	I_tdest			,
+    input [1:0] 	I_mode			,   // 0=原图 1=边缘 2=灰度 3=波普
+    input [1:0] 	I_pal			,   // 波普调色板编号
     input 			O_tready		,
     output [127:0] 	O_tdata			,
     output 			O_tlast			,
@@ -143,13 +145,171 @@ awb #(
         .O_tready(edge_O_tready)
     );
 
+    // ==================================================================
+    // 多算法切换：原图 / 边缘 / 灰度
+    //   边缘通路固有延迟 = 输入打拍(1) + 模块内输出寄存器(1) = 2 拍，
+    //   原图与灰度通路各补两级寄存器与之对齐，切换时不会出现行列错位。
+    // ==================================================================
+    function [23:0] rgb_to_gray;
+        input [23:0] px;
+        reg   [7:0]  g;
+        begin
+            g = {2'b0,px[23:18]} + {1'b0,px[15:9]} + {2'b0,px[7:2]};
+            rgb_to_gray = {g,g,g};
+        end
+    endfunction
+
+    function [7:0] rgb_to_y8;
+        input [23:0] px;
+        begin
+            rgb_to_y8 = {2'b0,px[23:18]} + {1'b0,px[15:9]} + {2'b0,px[7:2]};
+        end
+    endfunction
+
+    wire [95:0] gray_comb = { rgb_to_gray(awb_O_tdata[95:72]),
+                              rgb_to_gray(awb_O_tdata[71:48]),
+                              rgb_to_gray(awb_O_tdata[47:24]),
+                              rgb_to_gray(awb_O_tdata[23:0]) };
+
+    // ==================================================================
+    // 波普风格（扩展要求 1）：色调分离 + 假色彩
+    //   灰度量化成 4 档，每档映射到一组高饱和配色，
+    //   还原《玛丽莲·梦露》丝网印刷的平涂色块效果。
+    //   4 组配色通过 S_pal 切换（后续接入自动轮换）。
+    // ==================================================================
+    wire [1:0] S_pal = I_pal;            // 配色方案，由顶层每 3 秒轮换
+
+    function [23:0] pop_pal;
+        input [1:0] idx;                 // 灰度档 0=最暗 .. 3=最亮
+        input [1:0] pal;                 // 配色方案
+        begin
+            case (pal)
+                2'd1: case (idx)
+                    2'd0: pop_pal = 24'h00574b;
+                    2'd1: pop_pal = 24'hffe0b2;
+                    2'd2: pop_pal = 24'h00e5ff;
+                    default: pop_pal = 24'hff00aa;
+                endcase
+                2'd2: case (idx)
+                    2'd0: pop_pal = 24'hd32f2f;
+                    2'd1: pop_pal = 24'hffc0cb;
+                    2'd2: pop_pal = 24'h1e5aa8;
+                    default: pop_pal = 24'hff7a00;
+                endcase
+                2'd3: case (idx)
+                    2'd0: pop_pal = 24'h202020;
+                    2'd1: pop_pal = 24'hffd400;
+                    2'd2: pop_pal = 24'hff3b30;
+                    default: pop_pal = 24'hf2f2f2;
+                endcase
+                default: case (idx)      // 方案 0：梦露经典冷暖配
+                    2'd0: pop_pal = 24'h7b2d8e;   // 阴影 深紫
+                    2'd1: pop_pal = 24'hff9ec4;   // 中间调 皮肤粉
+                    2'd2: pop_pal = 24'hffd400;   // 亮部 头发黄
+                    default: pop_pal = 24'h00c8c8; // 最亮 背景青
+                endcase
+            endcase
+        end
+    endfunction
+
+    function [1:0] pop_band;             // 8bit 灰度 -> 4 档
+        input [7:0] g;
+        begin
+            if      (g < 8'd64 ) pop_band = 2'd0;
+            else if (g < 8'd128) pop_band = 2'd1;
+            else if (g < 8'd192) pop_band = 2'd2;
+            else                 pop_band = 2'd3;
+        end
+    endfunction
+
+    // 每拍 4 个像素的灰度档位（像素 0 为最左）
+    wire [1:0] b0 = pop_band(rgb_to_y8(awb_O_tdata[95:72]));
+    wire [1:0] b1 = pop_band(rgb_to_y8(awb_O_tdata[71:48]));
+    wire [1:0] b2 = pop_band(rgb_to_y8(awb_O_tdata[47:24]));
+    wire [1:0] b3 = pop_band(rgb_to_y8(awb_O_tdata[23:0]));
+
+    // 上一拍 4 个像素的档位，用来取 x-2 位置的档位
+    reg [7:0] S_bands_d;
+
+    wire [1:0] s0 = S_bands_d[5:4];      // x-2 落在上一拍第 3 个像素
+    wire [1:0] s1 = S_bands_d[7:6];      // x-2 落在上一拍第 4 个像素
+    wire [1:0] s2 = b0;
+    wire [1:0] s3 = b1;
+
+    // 套印错位：中间调色层（皮肤粉 / 头发黄）按 x-2 的档位着色，
+    // 还原丝网印刷中套色没对齐、颜色向右溢出的效果；最暗/最亮层不动。
+    wire [1:0] e0 = ((s0 == 2'd1) || (s0 == 2'd2)) ? s0 : b0;
+    wire [1:0] e1 = ((s1 == 2'd1) || (s1 == 2'd2)) ? s1 : b1;
+    wire [1:0] e2 = ((s2 == 2'd1) || (s2 == 2'd2)) ? s2 : b2;
+    wire [1:0] e3 = ((s3 == 2'd1) || (s3 == 2'd2)) ? s3 : b3;
+
+    wire [95:0] pop_comb = { pop_pal(e0, S_pal),
+                             pop_pal(e1, S_pal),
+                             pop_pal(e2, S_pal),
+                             pop_pal(e3, S_pal) };
+
+    reg [95:0] raw_d1, raw_d2, gray_d1, gray_d2, pop_d1, pop_d2;
+    reg        raw_v1, raw_v2, raw_u1, raw_u2, raw_l1, raw_l2;
+
+    always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
+        if(!I_rst_n) begin
+            raw_d1  <= 96'd0; raw_d2  <= 96'd0;
+            gray_d1 <= 96'd0; gray_d2 <= 96'd0;
+            pop_d1  <= 96'd0; pop_d2  <= 96'd0;
+            raw_v1 <= 1'b0; raw_v2 <= 1'b0;
+            raw_u1 <= 1'b0; raw_u2 <= 1'b0;
+            raw_l1 <= 1'b0; raw_l2 <= 1'b0;
+        end
+        else begin
+            raw_d1  <= awb_O_tdata;   raw_d2  <= raw_d1;
+            gray_d1 <= gray_comb;     gray_d2 <= gray_d1;
+            pop_d1  <= pop_comb;      pop_d2  <= pop_d1;
+            S_bands_d <= {b3, b2, b1, b0};
+            raw_v1  <= awb_O_tvalid;  raw_v2  <= raw_v1;
+            raw_u1  <= awb_O_tuser;   raw_u2  <= raw_u1;
+            raw_l1  <= awb_O_tlast;   raw_l2  <= raw_l1;
+        end
+    end
+
+    reg [95:0] sel_data;
+    reg        sel_valid, sel_user, sel_last;
+
+    always @(*) begin
+        case (I_mode)
+            2'd1: begin
+                sel_data  = edge_O_tdata;
+                sel_valid = edge_O_tvalid;
+                sel_user  = edge_O_tuser;
+                sel_last  = edge_O_tlast;
+            end
+            2'd2: begin
+                sel_data  = gray_d2;
+                sel_valid = raw_v2;
+                sel_user  = raw_u2;
+                sel_last  = raw_l2;
+            end
+            2'd3: begin
+                sel_data  = pop_d2;
+                sel_valid = raw_v2;
+                sel_user  = raw_u2;
+                sel_last  = raw_l2;
+            end
+            default: begin
+                sel_data  = raw_d2;
+                sel_valid = raw_v2;
+                sel_user  = raw_u2;
+                sel_last  = raw_l2;
+            end
+        endcase
+    end
+
     data_96bit_to_128bit u_data_96bit_to_128bit(
         .I_clk              ( axi4s_video_aclk  ),
         .I_rst_n            ( I_rst_n           ),
 
-        .I_96b_frame_start  ( edge_O_tuser      ),
-        .I_96b_valid        ( edge_O_tvalid     ),
-        .I_96b_data         ( edge_O_tdata      ),
+        .I_96b_frame_start  ( sel_user          ),
+        .I_96b_valid        ( sel_valid         ),
+        .I_96b_data         ( sel_data          ),
 	
         .O_128b_frame_start ( awb_O_tuser_128  	),
         .O_128b_valid       ( awb_O_tvalid_128 	),
