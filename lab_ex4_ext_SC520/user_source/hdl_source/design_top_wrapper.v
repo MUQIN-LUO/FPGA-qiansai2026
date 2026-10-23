@@ -109,7 +109,8 @@ module design_top_wrapper (
     
     wire        S_video_out_rd_busy;
     wire        S_video_in_wr_busy; 
-    wire[1:0]   S_video_out_rp;     
+    wire[1:0]   S_video_out_rp;
+    wire[1:0]   S_video_in_wp;
 
     wire        S_ddr_user_wr_en;       
     wire        S_ddr_user_rd_en;       
@@ -406,6 +407,95 @@ module design_top_wrapper (
         else begin
             S_pal_csi1 <= S_pal;
             S_pal_csi2 <= S_pal_csi1;
+        end
+    end
+
+    // ------------------------------------------------------------------
+    // 处理延迟可视化（进阶 3）：以毫秒为单位显示
+    //   帧缓冲深度 = 写指针领先读指针的槽数（0~3 帧）
+    //   延迟 ms = 帧数 x 1000 / 实测帧率，每 0.5 s 用串行除法器算一次
+    // ------------------------------------------------------------------
+    reg [1:0] S_lat_frames;                 // DDR 时钟域
+    reg [1:0] S_lat_sys1, S_lat_sys2;       // 同步到 50 MHz 域
+    reg [9:0] S_fps_sys1, S_fps_sys2;       // 帧率同步到 50 MHz 域
+    reg [9:0] S_lat_ms;                     // 换算结果
+    reg [9:0] S_lat_pix1, S_lat_pix2;       // 同步到像素域
+
+    // 写指针在帧起始先递增、再用旧值选槽，因此"刚写入的槽"是 wp-1；
+    // 读槽比它落后 (wp-1)-rp 格，即真正的缓冲帧数。
+    always @(posedge S_ddr_clk or negedge S_rst_n) begin
+        if (!S_rst_n)
+            S_lat_frames <= 2'd0;
+        else
+            S_lat_frames <= (S_video_in_wp - S_video_out_rp - 2'd1) & 2'b11;
+    end
+
+    // ---- 串行除法器：dividend = 帧数*1000，divisor = 帧率 ----
+    reg [11:0] S_div_dend;
+    reg [9:0]  S_div_dsor;
+    reg [11:0] S_div_rem;
+    reg [9:0]  S_div_quo;
+    reg [4:0]  S_div_cnt;
+    reg        S_div_run;
+    reg        S_tick_d2;
+
+    wire S_tick_evt2 = S_tick_500ms ^ S_tick_d2;
+
+    always @(posedge I_sys_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_lat_sys1 <= 2'd0;  S_lat_sys2 <= 2'd0;
+            S_fps_sys1 <= 10'd0; S_fps_sys2 <= 10'd0;
+            S_tick_d2  <= 1'b0;
+            S_div_dend <= 12'd0; S_div_dsor <= 10'd1;
+            S_div_rem  <= 12'd0; S_div_quo  <= 10'd0;
+            S_div_cnt  <= 5'd0;  S_div_run  <= 1'b0;
+            S_lat_ms   <= 10'd0;
+        end
+        else begin
+            S_lat_sys1 <= S_lat_frames;
+            S_lat_sys2 <= S_lat_sys1;
+            S_fps_sys1 <= S_fps_latched;
+            S_fps_sys2 <= S_fps_sys1;
+            S_tick_d2  <= S_tick_500ms;
+
+            if (S_tick_evt2 && !S_div_run) begin
+                // 启动一次除法：ms = frames * 1000 / fps
+                S_div_dend <= {2'b00, S_lat_sys2} * 12'd1000;
+                S_div_dsor <= (S_fps_sys2 == 10'd0) ? 10'd1 : S_fps_sys2;
+                S_div_rem  <= 12'd0;
+                S_div_quo  <= 10'd0;
+                S_div_cnt  <= 5'd12;
+                S_div_run  <= 1'b1;
+            end
+            else if (S_div_run) begin
+                if (S_div_cnt != 5'd0) begin
+                    if ({S_div_rem[10:0], S_div_dend[11]} >= {2'b00, S_div_dsor}) begin
+                        S_div_rem <= {S_div_rem[10:0], S_div_dend[11]} - {2'b00, S_div_dsor};
+                        S_div_quo <= {S_div_quo[8:0], 1'b1};
+                    end
+                    else begin
+                        S_div_rem <= {S_div_rem[10:0], S_div_dend[11]};
+                        S_div_quo <= {S_div_quo[8:0], 1'b0};
+                    end
+                    S_div_dend <= {S_div_dend[10:0], 1'b0};
+                    S_div_cnt  <= S_div_cnt - 5'd1;
+                end
+                else begin
+                    S_div_run <= 1'b0;
+                    S_lat_ms  <= (S_div_quo > 10'd99) ? 10'd99 : S_div_quo;
+                end
+            end
+        end
+    end
+
+    always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin
+        if (!S_hdmi_rst_n) begin
+            S_lat_pix1 <= 10'd0;
+            S_lat_pix2 <= 10'd0;
+        end
+        else begin
+            S_lat_pix1 <= S_lat_ms;
+            S_lat_pix2 <= S_lat_pix1;
         end
     end
 
@@ -972,6 +1062,7 @@ isp_top u_isp_top (
 		.I_display_pause      ( 1'b0                  ),
         .I_video_out_rd_busy  ( S_video_out_rd_busy   ),
         .O_video_in_wr_busy   ( S_video_in_wr_busy    ),
+        .O_video_in_wp        ( S_video_in_wp         ),
         .O_video_out_rp       ( S_video_out_rp        ),
 
         .O_ddr_user_wr_en     ( S_vi_ddr_wr_en        ),
@@ -1119,6 +1210,7 @@ isp_top u_isp_top (
         .I_debug_status  ( S_hdmi_debug_status),
         .I_fps_value     ( S_fps_value      ),
         .I_mode          ( S_mode_pix2      ),
+        .I_lat           ( S_lat_pix2       ),
         .O_video_rd_en   ( S_hdmi_window_rd_en),
         .I_video_rd_data ( S_video_rd_data    ),
         .O_hdmi_vsync    ( S_hdmi_out_vsync   ),

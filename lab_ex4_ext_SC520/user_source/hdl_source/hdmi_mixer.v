@@ -16,7 +16,8 @@ module hdmi_mixer #(
 
     input wire[3:0]   I_debug_status,
     input wire[9:0]   I_fps_value,      // 实时帧率，由顶层每秒锁存一次
-    input wire[1:0]   I_mode,           // 当前算法：0=原图 1=边缘 2=灰度
+    input wire[1:0]   I_mode,           // 当前算法：0=原图 1=边缘 2=灰度 3=波普
+    input wire[9:0]   I_lat,            // 端到端延迟（毫秒）
 
     output wire       O_video_rd_en,
     input wire[23:0]  I_video_rd_data,
@@ -94,9 +95,9 @@ module hdmi_mixer #(
     localparam integer OSD_SCALE = 3;                       // 字体像素放大倍数
     localparam integer OSD_CELL  = 10;                      // 每字符 10x10 字体像素
     localparam integer OSD_ADV   = OSD_CELL * OSD_SCALE;    // 字距 30
-    localparam integer OSD_W     = 7 * OSD_ADV;             // 210
+    localparam integer OSD_W     = 8 * OSD_ADV;             // 240（最长一行 LAT:33MS）
     localparam integer OSD_ROWH  = OSD_CELL * OSD_SCALE;    // 30  单行高
-    localparam integer OSD_H     = 2 * OSD_ROWH;            // 60  两行
+    localparam integer OSD_H     = 3 * OSD_ROWH;            // 90  三行
     localparam integer OSD_TOP   = 24;                      // 上边距
     localparam integer OSD_X0    = 24;                      // 左边距
 
@@ -106,15 +107,19 @@ module hdmi_mixer #(
     wire [11:0] S_osd_ox = S_x_2d - OSD_X0;
     wire [11:0] S_osd_oy = S_y_2d - OSD_TOP;
 
-    // 第 0 行显示帧率，第 1 行显示当前算法
-    wire        S_osd_row  = (S_osd_oy >= OSD_ROWH);
-    wire [11:0] S_osd_oyr  = S_osd_row ? (S_osd_oy - OSD_ROWH) : S_osd_oy;
+    // 第 0 行帧率，第 1 行算法，第 2 行延迟
+    wire [1:0]  S_osd_ridx = (S_osd_oy >= (2*OSD_ROWH)) ? 2'd2 :
+                             (S_osd_oy >= OSD_ROWH)     ? 2'd1 : 2'd0;
+    wire [11:0] S_osd_oyr  = S_osd_oy -
+                             ((S_osd_ridx == 2'd2) ? 2*OSD_ROWH :
+                              (S_osd_ridx == 2'd1) ? OSD_ROWH   : 0);
 
     // ---- 定位到第几个字符槽，以及槽内横坐标 ----
     reg [2:0] S_osd_slot;
     reg [6:0] S_osd_colx;
     always @(*) begin
-        if      (S_osd_ox >= 12'd180) begin S_osd_slot = 3'd6; S_osd_colx = S_osd_ox - 12'd180; end
+        if      (S_osd_ox >= 12'd210) begin S_osd_slot = 3'd7; S_osd_colx = S_osd_ox - 12'd210; end
+        else if (S_osd_ox >= 12'd180) begin S_osd_slot = 3'd6; S_osd_colx = S_osd_ox - 12'd180; end
         else if (S_osd_ox >= 12'd150) begin S_osd_slot = 3'd5; S_osd_colx = S_osd_ox - 12'd150; end
         else if (S_osd_ox >= 12'd120) begin S_osd_slot = 3'd4; S_osd_colx = S_osd_ox - 12'd120; end
         else if (S_osd_ox >= 12'd90 ) begin S_osd_slot = 3'd3; S_osd_colx = S_osd_ox - 12'd90;  end
@@ -157,40 +162,74 @@ module hdmi_mixer #(
     wire [9:0] S_fps_one_in = S_fps_ten_in - ((S_dig_t << 3) + (S_dig_t << 1));
     wire [3:0] S_dig_o      = S_fps_one_in[3:0];
 
+    // ---- 延迟毫秒值拆成十位/个位（0~99，比较-减法，无除法器）----
+    reg [3:0] S_lat_t;
+    always @(*) begin
+        if      (I_lat >= 10'd90) S_lat_t = 4'd9;
+        else if (I_lat >= 10'd80) S_lat_t = 4'd8;
+        else if (I_lat >= 10'd70) S_lat_t = 4'd7;
+        else if (I_lat >= 10'd60) S_lat_t = 4'd6;
+        else if (I_lat >= 10'd50) S_lat_t = 4'd5;
+        else if (I_lat >= 10'd40) S_lat_t = 4'd4;
+        else if (I_lat >= 10'd30) S_lat_t = 4'd3;
+        else if (I_lat >= 10'd20) S_lat_t = 4'd2;
+        else if (I_lat >= 10'd10) S_lat_t = 4'd1;
+        else                      S_lat_t = 4'd0;
+    end
+
+    wire [9:0] S_lat_o_in = I_lat - ((S_lat_t << 3) + (S_lat_t << 1));
+    wire [3:0] S_lat_o    = S_lat_o_in[3:0];
+
     // ---- 每个槽取哪一字模 ----
     //   0=F 1=P 2=S 3=: 4..13=0..9 15=空白
-    //   16=R 17=A 18=W 19=E 20=D 21=G 22=Y
+    //   16=R 17=A 18=W 19=E 20=D 21=G 22=Y 23=O 24=L 25=T
     reg [4:0] S_osd_ch;
     always @(*) begin
-        if (S_osd_row) begin
-            // 第 1 行：算法名  0=RAW  1=EDGE  2=GRAY
-            case (S_osd_slot)
-                3'd0: S_osd_ch = (I_mode == 2'd0) ? 5'd16 :
-                                 (I_mode == 2'd1) ? 5'd19 :
-                                 (I_mode == 2'd2) ? 5'd21 : 5'd1;    // R / E / G / P
-                3'd1: S_osd_ch = (I_mode == 2'd0) ? 5'd17 :
-                                 (I_mode == 2'd1) ? 5'd20 :
-                                 (I_mode == 2'd2) ? 5'd16 : 5'd23;   // A / D / R / O
-                3'd2: S_osd_ch = (I_mode == 2'd0) ? 5'd18 :
-                                 (I_mode == 2'd1) ? 5'd21 :
-                                 (I_mode == 2'd2) ? 5'd17 : 5'd1;    // W / G / A / P
-                3'd3: S_osd_ch = (I_mode == 2'd1) ? 5'd19 :
-                                 (I_mode == 2'd2) ? 5'd22 : 5'd15;   // E / Y / 空白
-                default: S_osd_ch = 5'd15;
-            endcase
-        end
-        else begin
-            // 第 0 行：FPS:xxx
-            case (S_osd_slot)
-                3'd0:    S_osd_ch = 5'd0;
-                3'd1:    S_osd_ch = 5'd1;
-                3'd2:    S_osd_ch = 5'd2;
-                3'd3:    S_osd_ch = 5'd3;
-                3'd4:    S_osd_ch = (I_fps_value >= 10'd100) ? (5'd4 + S_dig_h) : 5'd15;
-                3'd5:    S_osd_ch = (I_fps_value >= 10'd10 ) ? (5'd4 + S_dig_t) : 5'd15;
-                default: S_osd_ch = 5'd4 + S_dig_o;
-            endcase
-        end
+        case (S_osd_ridx)
+            2'd1: begin
+                // 第 1 行：算法名  0=RAW  1=EDGE  2=GRAY  3=POP
+                case (S_osd_slot)
+                    3'd0: S_osd_ch = (I_mode == 2'd0) ? 5'd16 :
+                                     (I_mode == 2'd1) ? 5'd19 :
+                                     (I_mode == 2'd2) ? 5'd21 : 5'd1;    // R / E / G / P
+                    3'd1: S_osd_ch = (I_mode == 2'd0) ? 5'd17 :
+                                     (I_mode == 2'd1) ? 5'd20 :
+                                     (I_mode == 2'd2) ? 5'd16 : 5'd23;   // A / D / R / O
+                    3'd2: S_osd_ch = (I_mode == 2'd0) ? 5'd18 :
+                                     (I_mode == 2'd1) ? 5'd21 :
+                                     (I_mode == 2'd2) ? 5'd17 : 5'd1;    // W / G / A / P
+                    3'd3: S_osd_ch = (I_mode == 2'd1) ? 5'd19 :
+                                     (I_mode == 2'd2) ? 5'd22 : 5'd15;   // E / Y / 空白
+                    default: S_osd_ch = 5'd15;
+                endcase
+            end
+            2'd2: begin
+                // 第 2 行：延迟  LAT:xxMS（毫秒，单位必须写全，避免被当成分钟）
+                case (S_osd_slot)
+                    3'd0:    S_osd_ch = 5'd24;               // L
+                    3'd1:    S_osd_ch = 5'd17;               // A
+                    3'd2:    S_osd_ch = 5'd25;               // T
+                    3'd3:    S_osd_ch = 5'd3;                // :
+                    3'd4:    S_osd_ch = 5'd4 + S_lat_t;      // 十位
+                    3'd5:    S_osd_ch = 5'd4 + S_lat_o;      // 个位
+                    3'd6:    S_osd_ch = 5'd26;               // M
+                    default: S_osd_ch = 5'd2;                // S
+                endcase
+            end
+            default: begin
+                // 第 0 行：FPS:xxx
+                case (S_osd_slot)
+                    3'd0:    S_osd_ch = 5'd0;
+                    3'd1:    S_osd_ch = 5'd1;
+                    3'd2:    S_osd_ch = 5'd2;
+                    3'd3:    S_osd_ch = 5'd3;
+                    3'd4:    S_osd_ch = (I_fps_value >= 10'd100) ? (5'd4 + S_dig_h) : 5'd15;
+                    3'd5:    S_osd_ch = (I_fps_value >= 10'd10 ) ? (5'd4 + S_dig_t) : 5'd15;
+                    3'd6:    S_osd_ch = 5'd4 + S_dig_o;
+                    default: S_osd_ch = 5'd15;   // 第 8 格保持空白
+                endcase
+            end
+        endcase
     end
 
     // 字符槽内坐标：0..9，字形本体位于 1..8，第 0 列/行和第 9 列/行留给描边
@@ -343,6 +382,24 @@ module hdmi_mixer #(
                     3'd2: osd_font = 8'h66; 3'd3: osd_font = 8'h66;
                     3'd4: osd_font = 8'h66; 3'd5: osd_font = 8'h66;
                     3'd6: osd_font = 8'h3C; default: osd_font = 8'h00;
+                endcase
+                5'd24: case (row)  // L
+                    3'd0: osd_font = 8'h03; 3'd1: osd_font = 8'h03;
+                    3'd2: osd_font = 8'h03; 3'd3: osd_font = 8'h03;
+                    3'd4: osd_font = 8'h03; 3'd5: osd_font = 8'h03;
+                    3'd6: osd_font = 8'h7E; default: osd_font = 8'h00;
+                endcase
+                5'd25: case (row)  // T
+                    3'd0: osd_font = 8'h7E; 3'd1: osd_font = 8'h18;
+                    3'd2: osd_font = 8'h18; 3'd3: osd_font = 8'h18;
+                    3'd4: osd_font = 8'h18; 3'd5: osd_font = 8'h18;
+                    3'd6: osd_font = 8'h18; default: osd_font = 8'h00;
+                endcase
+                5'd26: case (row)  // M
+                    3'd0: osd_font = 8'h63; 3'd1: osd_font = 8'h77;
+                    3'd2: osd_font = 8'h7F; 3'd3: osd_font = 8'h6B;
+                    3'd4: osd_font = 8'h63; 3'd5: osd_font = 8'h63;
+                    3'd6: osd_font = 8'h63; default: osd_font = 8'h00;
                 endcase
                 default: osd_font = 8'h00;
             endcase

@@ -14,6 +14,7 @@ module video_in (
     input wire         I_display_pause,
     input wire         I_video_out_rd_busy,
     output wire        O_video_in_wr_busy,
+    output wire[1:0]   O_video_in_wp,      ///写指针（用于延迟可视化）
     output reg[1:0]    O_video_out_rp,     ///读指针
 
     output reg         O_ddr_user_wr_en,
@@ -44,6 +45,9 @@ module video_in (
 
 
     assign S_fifo_rst = S_camera_frame_start_extend_3d;
+
+    // 写指针导出给顶层，与读指针相减即为帧缓冲深度（延迟帧数）
+    assign O_video_in_wp = S_video_in_wp;
 
     // 以完整DDR写突发的占用标志仲裁，避免连续写入长期阻塞视频读取。
     assign O_video_in_wr_busy = S_ddr_wr_valid;
