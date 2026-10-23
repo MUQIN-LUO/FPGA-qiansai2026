@@ -31,3 +31,6 @@ desktop.ini
 # ---- Python 解析器临时产物 ----
 parser.out
 parsetab.py
+
+# ---- 官方 OSD 样例副本（仅本地参考，不纳入版本管理） ----
+lab_ex3_osd_SC520/
