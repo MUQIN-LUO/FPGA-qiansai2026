@@ -111,20 +111,28 @@ LUT 10,002 ｜ REG 13,396 ｜ SLICE 12,390 ｜ ERAM 39 ｜ DSP 8 ｜ PLL 3 ｜ G
 
 ```
 FPGA-qiansai2026/
-├─ lab_ex1_mipi_hdmi_SC520/          ← 基础要求(1)：采集 + 显示
+├─ lab_ex1_mipi_hdmi_SC520/          ← 基础要求(1)~(4)：采集 + 边缘检测 + OSD + Logo
 │  ├─ td_project/                    ← TD 工程（.al 在这里）
 │  │  ├─ camera_to_dsi_display.al    ← ★ 双击打开整个工程
 │  │  ├─ camera_to_dsi_display.sdc   ← 时序约束
 │  │  ├─ al_ip/                      ← PLL / FIFO / ChipWatcher 等 IP
-│  │  └─ camera_to_dsi_display_Runs/ ← 编译输出（含预编译位流）
+│  │  └─ camera_to_dsi_display_Runs/ ← 编译输出（重新编译生成）
 │  └─ user_source/
 │     ├─ constraints_source/pin.adc  ← ★ 引脚约束
 │     ├─ hdl_source/                 ← 全部 RTL 源码
+│     │  ├─ isp/edge_detect_96.v     ← Sobel 边缘检测
+│     │  └─ anlogic_logo_rom.v       ← 安路 Logo 位图 ROM
 │     └─ ip_source/                  ← IP 配置（.xml / .ipc）
 │
-└─ lab_ex2_edge_SC520/               ← 基础要求(2)：边缘检测
-   └─ （目录结构同上）
+├─ lab_ex2_edge_SC520/               ← 官方参考工程：仅边缘检测
+│  └─ （目录结构同上）
+│
+└─ lab_ex4_ext_SC520/                ← ★ 拓展要求开发工程（由 lab_ex1 复制）
+   └─ （目录结构同 lab_ex1，不含编译产物，首次打开需完整综合）
 ```
+
+> `lab_ex1` 作为**基础要求的定版基线**保留，后续拓展要求（2.4 / 2.5）在 `lab_ex4_ext_SC520`
+> 中开发，避免验证过的基线被实验性改动污染。
 
 ## 5. 如何打开工程
 

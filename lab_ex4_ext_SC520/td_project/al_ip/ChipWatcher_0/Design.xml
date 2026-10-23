@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ipxact:design xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ipxact="http://www.accellera.org/XMLSchema/IPXACT/1685-2014" xmlns:anlogic="http" xsi:schemaLocation="http://www.accellera.org/XMLSchema/IPXACT/1685-2014 http://www.accellera.org/XMLSchema/IPXACT/1685-2014/index.xsd">
+    <ipxact:vendor>anlogic.com</ipxact:vendor>
+    <ipxact:library>customized</ipxact:library>
+    <ipxact:name>design_ChipWatcher_0</ipxact:name>
+    <ipxact:version>1.0</ipxact:version>
+    <ipxact:componentInstances>
+        <ipxact:componentInstance>
+            <ipxact:instanceName>ChipWatcher_16ce29dbbb24_Inst</ipxact:instanceName>
+            <ipxact:componentRef vendor="anlogic.com" library="ip" name="ChipWatcher" version="1.1"/>
+            <ipxact:configurableElementValues>
+                <ipxact:configurableElementValue referenceId="CWC_BUS_NUM">6</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P0_Available">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P1_Available">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P2_Available">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P3_Available">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P4_Available">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P5_Available">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P6_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P7_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P8_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P9_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P10_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P11_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P12_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P13_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P14_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P15_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P16_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P17_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P18_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P19_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P20_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P21_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P22_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P23_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P24_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P25_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P26_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P27_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P28_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P29_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P30_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P31_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P32_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P33_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P34_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P35_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P36_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P37_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P38_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P39_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P40_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P41_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P42_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P43_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P44_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P45_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P46_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P47_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P48_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P49_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P50_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P51_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P52_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P53_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P54_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P55_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P56_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P57_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P58_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P59_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P60_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P61_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P62_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P63_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P64_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P65_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P66_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P67_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P68_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P69_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P70_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P71_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P72_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P73_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P74_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P75_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P76_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P77_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P78_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P79_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P80_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P81_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P82_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P83_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P84_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P85_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P86_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P87_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P88_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P89_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P90_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P91_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P92_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P93_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P94_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P95_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P96_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P97_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P98_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P99_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P100_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P101_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P102_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P103_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P104_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P105_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P106_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P107_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P108_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P109_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P110_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P111_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P112_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P113_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P114_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P115_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P116_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P117_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P118_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P119_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P120_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P121_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P122_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P123_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P124_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P125_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P126_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P127_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P128_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P129_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P130_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P131_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P132_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P133_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P134_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P135_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P136_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P137_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P138_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P139_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P140_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P141_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P142_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P143_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P144_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P145_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P146_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P147_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P148_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P149_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P150_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P151_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P152_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P153_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P154_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P155_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P156_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P157_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P158_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P159_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P160_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P161_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P162_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P163_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P164_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P165_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P166_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P167_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P168_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P169_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P170_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P171_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P172_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P173_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P174_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P175_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P176_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P177_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P178_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P179_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P180_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P181_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P182_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P183_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P184_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P185_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P186_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P187_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P188_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P189_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P190_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P191_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P192_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P193_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P194_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P195_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P196_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P197_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P198_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P199_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P200_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P201_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P202_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P203_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P204_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P205_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P206_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P207_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P208_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P209_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P210_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P211_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P212_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P213_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P214_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P215_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P216_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P217_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P218_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P219_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P220_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P221_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P222_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P223_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P224_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P225_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P226_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P227_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P228_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P229_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P230_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P231_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P232_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P233_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P234_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P235_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P236_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P237_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P238_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P239_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P240_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P241_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P242_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P243_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P244_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P245_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P246_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P247_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P248_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P249_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P250_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P251_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P252_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P253_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P254_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="P255_Available">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe_Width">16 1 11 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe0_WIDTH">16</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe1_WIDTH">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe2_WIDTH">11</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe3_WIDTH">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe4_WIDTH">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe5_WIDTH">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe0_Data_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe1_Data_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe2_Data_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe3_Data_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe4_Data_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe5_Data_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe_Data_Enable">1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe0_Trigger_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe1_Trigger_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe2_Trigger_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe3_Trigger_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe4_Trigger_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe5_Trigger_Enable">1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Probe_Trigger_Enable">1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="RAM_DATA_DEPTH">1024</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="INPUT_PIPE_NUM">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="OUTPUT_PIPE_NUM">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Capture_Control">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="AL_ITF">0</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="Trigger_Error">0</ipxact:configurableElementValue>
+            </ipxact:configurableElementValues>
+        </ipxact:componentInstance>
+    </ipxact:componentInstances>
+    <ipxact:adHocConnections>
+        <ipxact:adHocConnection>
+            <ipxact:name>probe0</ipxact:name>
+            <ipxact:portReferences>
+                <ipxact:internalPortReference componentRef="ChipWatcher_16ce29dbbb24_Inst" portRef="probe0"/>
+                <ipxact:externalPortReference portRef="probe0"/>
+            </ipxact:portReferences>
+        </ipxact:adHocConnection>
+        <ipxact:adHocConnection>
+            <ipxact:name>probe1</ipxact:name>
+            <ipxact:portReferences>
+                <ipxact:internalPortReference componentRef="ChipWatcher_16ce29dbbb24_Inst" portRef="probe1"/>
+                <ipxact:externalPortReference portRef="probe1"/>
+            </ipxact:portReferences>
+        </ipxact:adHocConnection>
+        <ipxact:adHocConnection>
+            <ipxact:name>probe2</ipxact:name>
+            <ipxact:portReferences>
+                <ipxact:internalPortReference componentRef="ChipWatcher_16ce29dbbb24_Inst" portRef="probe2"/>
+                <ipxact:externalPortReference portRef="probe2"/>
+            </ipxact:portReferences>
+        </ipxact:adHocConnection>
+        <ipxact:adHocConnection>
+            <ipxact:name>probe3</ipxact:name>
+            <ipxact:portReferences>
+                <ipxact:internalPortReference componentRef="ChipWatcher_16ce29dbbb24_Inst" portRef="probe3"/>
+                <ipxact:externalPortReference portRef="probe3"/>
+            </ipxact:portReferences>
+        </ipxact:adHocConnection>
+        <ipxact:adHocConnection>
+            <ipxact:name>probe4</ipxact:name>
+            <ipxact:portReferences>
+                <ipxact:internalPortReference componentRef="ChipWatcher_16ce29dbbb24_Inst" portRef="probe4"/>
+                <ipxact:externalPortReference portRef="probe4"/>
+            </ipxact:portReferences>
+        </ipxact:adHocConnection>
+        <ipxact:adHocConnection>
+            <ipxact:name>probe5</ipxact:name>
+            <ipxact:portReferences>
+                <ipxact:internalPortReference componentRef="ChipWatcher_16ce29dbbb24_Inst" portRef="probe5"/>
+                <ipxact:externalPortReference portRef="probe5"/>
+            </ipxact:portReferences>
+        </ipxact:adHocConnection>
+        <ipxact:adHocConnection>
+            <ipxact:name>clk</ipxact:name>
+            <ipxact:portReferences>
+                <ipxact:internalPortReference componentRef="ChipWatcher_16ce29dbbb24_Inst" portRef="clk"/>
+                <ipxact:externalPortReference portRef="clk"/>
+            </ipxact:portReferences>
+        </ipxact:adHocConnection>
+    </ipxact:adHocConnections>
+    <ipxact:vendorExtensions>
+        <anlogic:device>PH1P35MDG324</anlogic:device>
+        <anlogic:speed>-3</anlogic:speed>
+        <anlogic:displayname>ChipWatcher</anlogic:displayname>
+        <anlogic:ipGenVersion value="168007 2025/07/10">1.0</anlogic:ipGenVersion>
+    </ipxact:vendorExtensions>
+</ipxact:design>
