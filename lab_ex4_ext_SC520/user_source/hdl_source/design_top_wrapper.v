@@ -124,6 +124,9 @@ module design_top_wrapper (
     wire [7:0]  S_avg_r, S_avg_g, S_avg_b;
     reg  [7:0]  S_avg_r_p, S_avg_g_p, S_avg_b_p;
 
+    wire [7:0]  S_lum;          // ISP 全帧 G 均值（像素域）
+    wire        S_lum_tgl;      // 每帧翻转一次的握手电平
+
     wire        S_ddr_user_wr_en;       
     wire        S_ddr_user_rd_en;       
     wire[24:0]  S_ddr_user_addr;        
@@ -946,15 +949,46 @@ module design_top_wrapper (
 	
 
   
-  ae_set u_ae_set (
-      .I_clk(S_24m_clk),
-      .I_rst(~S_rst_n),
-      .I_btn(4'b1111),      // 按键改作算法切换用，AE/AG 保持默认值
-      .I_cam_cfg_done(S_cam_cfg_done),
-      .I_ae_cfg_done(S_ae_cfg_done),
-      .O_ae_req(S_ae_req),
-      .O_ae(S_ae),
-      .O_ag(S_ag)
+  // ------------------------------------------------------------------
+  // AE 测光跨时钟域
+  //   ISP 在像素域（约 103MHz），AE 控制器在 24MHz 域。
+  //   O_lum 每帧才变一次（16.7ms），数据保持时间足够长，所以用
+  //   「电平翻转握手 + 数据打两拍」：检测到翻转沿时采数据，
+  //   此刻数据早已稳定，不存在采到半新半旧的问题。
+  // ------------------------------------------------------------------
+  reg        S_lum_t1, S_lum_t2, S_lum_t3;
+  reg  [7:0] S_lum_d1, S_lum_d2;
+  wire       S_lum_upd = S_lum_t2 ^ S_lum_t3;
+
+  always @(posedge S_24m_clk or negedge S_rst_n) begin
+    if (!S_rst_n) begin
+      S_lum_t1 <= 1'b0; S_lum_t2 <= 1'b0; S_lum_t3 <= 1'b0;
+      S_lum_d1 <= 8'd0; S_lum_d2 <= 8'd0;
+    end
+    else begin
+      S_lum_t1 <= S_lum_tgl;
+      S_lum_t2 <= S_lum_t1;
+      S_lum_t3 <= S_lum_t2;
+      S_lum_d1 <= S_lum;
+      S_lum_d2 <= S_lum_d1;
+    end
+  end
+
+  // AE 闭环控制器（替代原厂按键手动 AE，模块在 uiisp_beta/ae_set.v 内）
+  ae_ctrl #(
+      .AE_INIT   (16'd1990),   // 与原厂默认一致，上电不跳变
+      .AG_INIT   (16'd144 ),   // 16x 模拟增益
+      .AE_TARGET (8'd96   )    // 目标亮度，O_lum 单位（满量程 224）
+  ) u_ae_ctrl (
+      .I_clk          (S_24m_clk      ),
+      .I_rst          (~S_rst_n       ),
+      .I_cam_cfg_done (S_cam_cfg_done ),
+      .I_ae_cfg_done  (S_ae_cfg_done  ),
+      .I_lum          (S_lum_d2       ),
+      .I_lum_upd      (S_lum_upd      ),
+      .O_ae_req       (S_ae_req       ),
+      .O_ae           (S_ae           ),
+      .O_ag           (S_ag           )
   );
   
     uicfgcs520 #(
@@ -1119,6 +1153,8 @@ isp_top u_isp_top (
 .O_rgb_r         (S_avg_r),
 .O_rgb_g         (S_avg_g),
 .O_rgb_b         (S_avg_b),
+.O_lum           (S_lum),
+.O_lum_tgl       (S_lum_tgl),
 .O_tready        (S_ISP_O_tready),
 .O_tdata         (S_ISP_O_tdata ),
 .O_tlast         (S_ISP_O_tlast ),

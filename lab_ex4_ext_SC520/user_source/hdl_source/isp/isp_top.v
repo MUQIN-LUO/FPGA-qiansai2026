@@ -15,9 +15,11 @@ module isp_top (
     output reg        O_det_valid	,   // 颜色+面积+形状 全部通过
     output reg        O_det_cand	,   // 颜色+面积通过（形状未过，供调参观察）
     output reg [9:0]  O_det_cnt		,   // 命中像素数 / 16（调试显示用）
-    output reg [7:0]  O_rgb_r		,   // 全画面滚动平均色（白平衡标定用）
+    output reg [7:0]  O_rgb_r		,   // 中心 64x64 区域平均色（白平衡标定 / 验证用）
     output reg [7:0]  O_rgb_g		,
     output reg [7:0]  O_rgb_b		,
+    output reg [7:0]  O_lum			,   // 全帧 G 通道均值（AE 测光），满量程 224
+    output reg        O_lum_tgl		,   // 每帧翻转一次，供跨时钟域握手
     input 			O_tready		,
     output [127:0] 	O_tdata			,
     output 			O_tlast			,
@@ -477,6 +479,38 @@ awb #(
                     end
                 end
             end
+        end
+    end
+
+    // ==================================================================
+    // AE 测光：全帧 G 通道累加
+    //   刻意只用 G：
+    //     G 的白平衡增益按定义恒为 1.0，所以 AWB 怎么调都不影响 AE，
+    //     两个闭环之间的耦合被从结构上切断。取的是白平衡之后的 G，
+    //     和肉眼看到的亮度一致。
+    //
+    //   量程：每拍 4 个 G 之和最大 1020，整帧 320x720 = 230400 拍，
+    //         累加上限 235,008,000 < 2^28，不会溢出。
+    //   取 [27:20]（右移 20）得到 0~224 的读数，满量程对应全白。
+    //   注意这不是严格 0~255：921600 像素 / 2^20 = 0.879，
+    //   所以 O_lum = 真实均值 x 0.879，AE 的目标值按这个单位给即可。
+    // ==================================================================
+    reg [27:0] S_lum_acc;
+
+    always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_lum_acc <= 28'd0;
+            O_lum     <= 8'd0;
+            O_lum_tgl <= 1'b0;
+        end
+        else if (S_tuser_evt) begin
+            // 帧尾：锁存本帧均值，并翻转握手电平通知 24MHz 域
+            O_lum     <= (S_lum_acc[27:20] > 8'd224) ? 8'd224 : S_lum_acc[27:20];
+            O_lum_tgl <= ~O_lum_tgl;
+            S_lum_acc <= 28'd0;
+        end
+        else if (S_det_valid) begin
+            S_lum_acc <= S_lum_acc + {18'd0, S_beat_g};
         end
     end
 
