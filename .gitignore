@@ -27,6 +27,7 @@ desktop.ini
 # ---- 日志（如需保留，删除下面两行） ----
 # *.log
 # *.logw
+**/log/
 
 # ---- Python 解析器临时产物 ----
 parser.out

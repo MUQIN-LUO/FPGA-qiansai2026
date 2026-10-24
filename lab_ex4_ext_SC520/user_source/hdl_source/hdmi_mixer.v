@@ -18,6 +18,16 @@ module hdmi_mixer #(
     input wire[9:0]   I_fps_value,      // 实时帧率，由顶层每秒锁存一次
     input wire[1:0]   I_mode,           // 当前算法：0=原图 1=边缘 2=灰度 3=波普
     input wire[9:0]   I_lat,            // 端到端延迟（毫秒）
+    input wire[11:0]  I_det_minx,       // 黄色目标外接框（像素域）
+    input wire[11:0]  I_det_maxx,
+    input wire[11:0]  I_det_miny,
+    input wire[11:0]  I_det_maxy,
+    input wire        I_det_valid,
+    input wire        I_det_cand,       // 颜色+面积通过但形状未过（调试用）
+    input wire[9:0]   I_det_cnt,        // 命中像素数/16（调试显示）
+    input wire[7:0]   I_avg_r,          // 中心区域平均色（调试显示）
+    input wire[7:0]   I_avg_g,
+    input wire[7:0]   I_avg_b,
 
     output wire       O_video_rd_en,
     input wire[23:0]  I_video_rd_data,
@@ -97,7 +107,7 @@ module hdmi_mixer #(
     localparam integer OSD_ADV   = OSD_CELL * OSD_SCALE;    // 字距 30
     localparam integer OSD_W     = 8 * OSD_ADV;             // 240（最长一行 LAT:33MS）
     localparam integer OSD_ROWH  = OSD_CELL * OSD_SCALE;    // 30  单行高
-    localparam integer OSD_H     = 3 * OSD_ROWH;            // 90  三行
+    localparam integer OSD_H     = 5 * OSD_ROWH;            // 150 五行
     localparam integer OSD_TOP   = 24;                      // 上边距
     localparam integer OSD_X0    = 24;                      // 左边距
 
@@ -107,12 +117,16 @@ module hdmi_mixer #(
     wire [11:0] S_osd_ox = S_x_2d - OSD_X0;
     wire [11:0] S_osd_oy = S_y_2d - OSD_TOP;
 
-    // 第 0 行帧率，第 1 行算法，第 2 行延迟
-    wire [1:0]  S_osd_ridx = (S_osd_oy >= (2*OSD_ROWH)) ? 2'd2 :
-                             (S_osd_oy >= OSD_ROWH)     ? 2'd1 : 2'd0;
+    // 第 0 行帧率，第 1 行算法，第 2 行延迟，第 3 行 R/G，第 4 行 B
+    wire [2:0]  S_osd_ridx = (S_osd_oy >= (4*OSD_ROWH)) ? 3'd4 :
+                             (S_osd_oy >= (3*OSD_ROWH)) ? 3'd3 :
+                             (S_osd_oy >= (2*OSD_ROWH)) ? 3'd2 :
+                             (S_osd_oy >= OSD_ROWH)     ? 3'd1 : 3'd0;
     wire [11:0] S_osd_oyr  = S_osd_oy -
-                             ((S_osd_ridx == 2'd2) ? 2*OSD_ROWH :
-                              (S_osd_ridx == 2'd1) ? OSD_ROWH   : 0);
+                             ((S_osd_ridx == 3'd4) ? 4*OSD_ROWH :
+                              (S_osd_ridx == 3'd3) ? 3*OSD_ROWH :
+                              (S_osd_ridx == 3'd2) ? 2*OSD_ROWH :
+                              (S_osd_ridx == 3'd1) ? OSD_ROWH   : 0);
 
     // ---- 定位到第几个字符槽，以及槽内横坐标 ----
     reg [2:0] S_osd_slot;
@@ -162,6 +176,89 @@ module hdmi_mixer #(
     wire [9:0] S_fps_one_in = S_fps_ten_in - ((S_dig_t << 3) + (S_dig_t << 1));
     wire [3:0] S_dig_o      = S_fps_one_in[3:0];
 
+    // ---- 中心区域平均色（0~255，全量程）拆百/十/个位 ----
+    //   白平衡标定需要满量程读数：显示值就是该通道的真实平均值，
+    //   直接可算增益 gain = 65536 * G / 通道均值。
+    function [1:0] div100_255;
+        input [7:0] x;
+        begin
+            if      (x >= 8'd200) div100_255 = 2'd2;
+            else if (x >= 8'd100) div100_255 = 2'd1;
+            else                  div100_255 = 2'd0;
+        end
+    endfunction
+
+    function [3:0] div10_99;
+        input [6:0] x;                       // 0~99
+        begin
+            if      (x >= 7'd90) div10_99 = 4'd9;
+            else if (x >= 7'd80) div10_99 = 4'd8;
+            else if (x >= 7'd70) div10_99 = 4'd7;
+            else if (x >= 7'd60) div10_99 = 4'd6;
+            else if (x >= 7'd50) div10_99 = 4'd5;
+            else if (x >= 7'd40) div10_99 = 4'd4;
+            else if (x >= 7'd30) div10_99 = 4'd3;
+            else if (x >= 7'd20) div10_99 = 4'd2;
+            else if (x >= 7'd10) div10_99 = 4'd1;
+            else                 div10_99 = 4'd0;
+        end
+    endfunction
+
+    // 100 = 64 + 32 + 4
+    wire [1:0] S_ar_h = div100_255(I_avg_r);
+    wire [1:0] S_ag_h = div100_255(I_avg_g);
+    wire [1:0] S_ab_h = div100_255(I_avg_b);
+
+    wire [7:0] S_ar_r = I_avg_r - (({6'd0,S_ar_h} << 6) + ({6'd0,S_ar_h} << 5) + ({6'd0,S_ar_h} << 2));
+    wire [7:0] S_ag_r = I_avg_g - (({6'd0,S_ag_h} << 6) + ({6'd0,S_ag_h} << 5) + ({6'd0,S_ag_h} << 2));
+    wire [7:0] S_ab_r = I_avg_b - (({6'd0,S_ab_h} << 6) + ({6'd0,S_ab_h} << 5) + ({6'd0,S_ab_h} << 2));
+
+    wire [3:0] S_ar_t = div10_99(S_ar_r[6:0]);
+    wire [3:0] S_ag_t = div10_99(S_ag_r[6:0]);
+    wire [3:0] S_ab_t = div10_99(S_ab_r[6:0]);
+
+    wire [6:0] S_ar_m = S_ar_r[6:0] - ({3'd0,S_ar_t} << 3) - ({3'd0,S_ar_t} << 1);
+    wire [6:0] S_ag_m = S_ag_r[6:0] - ({3'd0,S_ag_t} << 3) - ({3'd0,S_ag_t} << 1);
+    wire [6:0] S_ab_m = S_ab_r[6:0] - ({3'd0,S_ab_t} << 3) - ({3'd0,S_ab_t} << 1);
+
+    wire [3:0] S_ar_o = S_ar_m[3:0];
+    wire [3:0] S_ag_o = S_ag_m[3:0];
+    wire [3:0] S_ab_o = S_ab_m[3:0];
+
+    // ---- 检测像素数（0~999）拆成三位，供调试显示 ----
+    reg [3:0] S_dc_h;
+    always @(*) begin
+        if      (I_det_cnt >= 10'd900) S_dc_h = 4'd9;
+        else if (I_det_cnt >= 10'd800) S_dc_h = 4'd8;
+        else if (I_det_cnt >= 10'd700) S_dc_h = 4'd7;
+        else if (I_det_cnt >= 10'd600) S_dc_h = 4'd6;
+        else if (I_det_cnt >= 10'd500) S_dc_h = 4'd5;
+        else if (I_det_cnt >= 10'd400) S_dc_h = 4'd4;
+        else if (I_det_cnt >= 10'd300) S_dc_h = 4'd3;
+        else if (I_det_cnt >= 10'd200) S_dc_h = 4'd2;
+        else if (I_det_cnt >= 10'd100) S_dc_h = 4'd1;
+        else                           S_dc_h = 4'd0;
+    end
+
+    wire [9:0] S_dc_ten_in = I_det_cnt - ((S_dc_h << 7) + (S_dc_h << 6) + (S_dc_h << 5) + (S_dc_h << 2));
+
+    reg [3:0] S_dc_t;
+    always @(*) begin
+        if      (S_dc_ten_in >= 10'd90) S_dc_t = 4'd9;
+        else if (S_dc_ten_in >= 10'd80) S_dc_t = 4'd8;
+        else if (S_dc_ten_in >= 10'd70) S_dc_t = 4'd7;
+        else if (S_dc_ten_in >= 10'd60) S_dc_t = 4'd6;
+        else if (S_dc_ten_in >= 10'd50) S_dc_t = 4'd5;
+        else if (S_dc_ten_in >= 10'd40) S_dc_t = 4'd4;
+        else if (S_dc_ten_in >= 10'd30) S_dc_t = 4'd3;
+        else if (S_dc_ten_in >= 10'd20) S_dc_t = 4'd2;
+        else if (S_dc_ten_in >= 10'd10) S_dc_t = 4'd1;
+        else                            S_dc_t = 4'd0;
+    end
+
+    wire [9:0] S_dc_one_in = S_dc_ten_in - ((S_dc_t << 3) + (S_dc_t << 1));
+    wire [3:0] S_dc_o     = S_dc_one_in[3:0];
+
     // ---- 延迟毫秒值拆成十位/个位（0~99，比较-减法，无除法器）----
     reg [3:0] S_lat_t;
     always @(*) begin
@@ -186,7 +283,7 @@ module hdmi_mixer #(
     reg [4:0] S_osd_ch;
     always @(*) begin
         case (S_osd_ridx)
-            2'd1: begin
+            3'd1: begin
                 // 第 1 行：算法名  0=RAW  1=EDGE  2=GRAY  3=POP
                 case (S_osd_slot)
                     3'd0: S_osd_ch = (I_mode == 2'd0) ? 5'd16 :
@@ -203,7 +300,30 @@ module hdmi_mixer #(
                     default: S_osd_ch = 5'd15;
                 endcase
             end
-            2'd2: begin
+            3'd3: begin
+                // 第 3 行：中心区域 R 均值 + G 均值（满量程 0~255，供白平衡标定）
+                case (S_osd_slot)
+                    3'd0:    S_osd_ch = 5'd16;               // R
+                    3'd1:    S_osd_ch = 5'd4 + S_ar_h;       // 百位
+                    3'd2:    S_osd_ch = 5'd4 + S_ar_t;       // 十位
+                    3'd3:    S_osd_ch = 5'd4 + S_ar_o;       // 个位
+                    3'd4:    S_osd_ch = 5'd21;               // G
+                    3'd5:    S_osd_ch = 5'd4 + S_ag_h;
+                    3'd6:    S_osd_ch = 5'd4 + S_ag_t;
+                    default: S_osd_ch = 5'd4 + S_ag_o;
+                endcase
+            end
+            3'd4: begin
+                // 第 4 行：中心区域 B 均值（满量程 0~255）
+                case (S_osd_slot)
+                    3'd0:    S_osd_ch = 5'd27;               // B
+                    3'd1:    S_osd_ch = 5'd4 + S_ab_h;
+                    3'd2:    S_osd_ch = 5'd4 + S_ab_t;
+                    3'd3:    S_osd_ch = 5'd4 + S_ab_o;
+                    default: S_osd_ch = 5'd15;
+                endcase
+            end
+            3'd2: begin
                 // 第 2 行：延迟  LAT:xxMS（毫秒，单位必须写全，避免被当成分钟）
                 case (S_osd_slot)
                     3'd0:    S_osd_ch = 5'd24;               // L
@@ -401,6 +521,12 @@ module hdmi_mixer #(
                     3'd4: osd_font = 8'h63; 3'd5: osd_font = 8'h63;
                     3'd6: osd_font = 8'h63; default: osd_font = 8'h00;
                 endcase
+                5'd27: case (row)  // B
+                    3'd0: osd_font = 8'h1F; 3'd1: osd_font = 8'h63;
+                    3'd2: osd_font = 8'h63; 3'd3: osd_font = 8'h1F;
+                    3'd4: osd_font = 8'h63; 3'd5: osd_font = 8'h63;
+                    3'd6: osd_font = 8'h1F; default: osd_font = 8'h00;
+                endcase
                 default: osd_font = 8'h00;
             endcase
         end
@@ -455,6 +581,44 @@ module hdmi_mixer #(
         .I_addr  ( S_logo_addr  ),
         .O_pixel ( S_logo_pixel )
     );
+
+    // ==================================================================
+    // 黄色目标外接框：绿色 3 像素边框
+    // ==================================================================
+    localparam integer BOX_T = 3;
+
+    // 绿色 = 颜色/面积/形状全部通过；橙色 = 颜色和面积过了但形状没通过，
+    // 用于现场判断是"颜色判据漏检"还是"形状判据太严"
+    wire S_in_box = (I_det_valid || I_det_cand) &&
+                    (S_x_2d >= I_det_minx) && (S_x_2d <= I_det_maxx) &&
+                    (S_y_2d >= I_det_miny) && (S_y_2d <= I_det_maxy);
+
+    wire S_box_edge = S_in_box &&
+                      ((S_x_2d <  I_det_minx + BOX_T) ||
+                       (S_x_2d + BOX_T > I_det_maxx) ||
+                       (S_y_2d <  I_det_miny + BOX_T) ||
+                       (S_y_2d + BOX_T > I_det_maxy));
+
+    // ==================================================================
+    // 中心取样框（标定辅助）：1 像素红色细框
+    //   位置与 ISP 里 O_rgb_r/g/b 的取样区域完全一致：
+    //     isp_top.v  S_in_center: x 608~671, y 328~391（64x64）
+    //   把被测物体（白纸 / 黄卷尺）对进这个框，OSD 第 3、4 行的读数
+    //   就是它本身的 R/G/B。演示时把 SHOW_CB 置 0 即可隐藏。
+    // ==================================================================
+    localparam integer CB_X0 = 608;
+    localparam integer CB_Y0 = 328;
+    localparam integer CB_W  = 64;
+    localparam integer CB_H  = 64;
+    localparam integer CB_T  = 1;                 // 线宽：1 像素
+    localparam         SHOW_CB = 1'b1;
+
+    wire S_cb_edge = (S_x_2d >= CB_X0) && (S_x_2d < CB_X0 + CB_W) &&
+                     (S_y_2d >= CB_Y0) && (S_y_2d < CB_Y0 + CB_H) &&
+                     ((S_x_2d <  CB_X0 + CB_T) ||
+                      (S_x_2d >= CB_X0 + CB_W - CB_T) ||
+                      (S_y_2d <  CB_Y0 + CB_T) ||
+                      (S_y_2d >= CB_Y0 + CB_H - CB_T));
 
     always @(posedge I_clk or negedge I_rst_n) begin
         if(!I_rst_n) begin
@@ -571,8 +735,14 @@ module hdmi_mixer #(
             else begin
                 if(S_video_de_2d) begin
                     O_hdmi_data <= S_window_active_2d ? S_video_data_2d : 24'd0;
+                    // 黄色目标外接框：绿=完全通过，橙=形状未通过
+                    if(S_box_edge)
+                        O_hdmi_data <= I_det_valid ? 24'h00ff00 : 24'hff8000;
+                    // 中心取样框：红色细框（标定用，和被检测框重叠时让检测框优先）
+                    else if(SHOW_CB && S_cb_edge)
+                        O_hdmi_data <= 24'hff0000;
                     // 安路 Logo：右上角，仅非透明像素覆盖
-                    if(S_logo_box && S_logo_pixel[24])
+                    else if(S_logo_box && S_logo_pixel[24])
                         O_hdmi_data <= S_logo_pixel[23:0];
                     // FPS OSD：背景透明，仅字形（亮绿）和描边（黑）覆盖画面
                     else if(S_osd_box) begin

@@ -112,6 +112,18 @@ module design_top_wrapper (
     wire[1:0]   S_video_out_rp;
     wire[1:0]   S_video_in_wp;
 
+    // 黄色目标检测结果（CSI 域 -> 像素域）
+    wire [11:0] S_det_minx, S_det_maxx, S_det_miny, S_det_maxy;
+    wire        S_det_valid, S_det_cand;
+    wire [9:0]  S_det_cnt;
+    reg  [11:0] S_det_minx_p, S_det_maxx_p, S_det_miny_p, S_det_maxy_p;
+    reg         S_det_valid_p, S_det_cand_p;
+    reg  [9:0]  S_det_cnt_p;
+
+    // 中心区域平均色（调试）
+    wire [7:0]  S_avg_r, S_avg_g, S_avg_b;
+    reg  [7:0]  S_avg_r_p, S_avg_g_p, S_avg_b_p;
+
     wire        S_ddr_user_wr_en;       
     wire        S_ddr_user_rd_en;       
     wire[24:0]  S_ddr_user_addr;        
@@ -496,6 +508,63 @@ module design_top_wrapper (
         else begin
             S_lat_pix1 <= S_lat_ms;
             S_lat_pix2 <= S_lat_pix1;
+        end
+    end
+
+    // ------------------------------------------------------------------
+    // 检测结果跨到像素域：先两级同步，再在每个显示帧起始整体锁存，
+    // 保证画框用到的 min/max 来自同一帧，不会出现半新半旧的框
+    // ------------------------------------------------------------------
+    reg [11:0] dmx_s1, dmxx_s1, dmy_s1, dmyx_s1;
+    reg [11:0] dmx_s2, dmxx_s2, dmy_s2, dmyx_s2;
+    reg        dv_s1,   dv_s2;
+    reg        dc_s1,   dc_s2;
+    reg [9:0]  dn_s1,   dn_s2;
+    reg [7:0]  ar_s1, ar_s2, ag_s1, ag_s2, ab_s1, ab_s2;
+
+    always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin
+        if (!S_hdmi_rst_n) begin
+            dmx_s1  <= 12'd0;  dmx_s2  <= 12'd0;
+            dmxx_s1 <= 12'd0;  dmxx_s2 <= 12'd0;
+            dmy_s1  <= 12'd0;  dmy_s2  <= 12'd0;
+            dmyx_s1 <= 12'd0;  dmyx_s2 <= 12'd0;
+            dv_s1   <= 1'b0;   dv_s2   <= 1'b0;
+            dc_s1   <= 1'b0;   dc_s2   <= 1'b0;
+            dn_s1   <= 10'd0;  dn_s2   <= 10'd0;
+            ar_s1 <= 8'd0; ar_s2 <= 8'd0;
+            ag_s1 <= 8'd0; ag_s2 <= 8'd0;
+            ab_s1 <= 8'd0; ab_s2 <= 8'd0;
+            S_avg_r_p <= 8'd0; S_avg_g_p <= 8'd0; S_avg_b_p <= 8'd0;
+            S_det_minx_p <= 12'd0; S_det_maxx_p <= 12'd0;
+            S_det_miny_p <= 12'd0; S_det_maxy_p <= 12'd0;
+            S_det_valid_p <= 1'b0;
+            S_det_cand_p  <= 1'b0;
+            S_det_cnt_p   <= 10'd0;
+        end
+        else begin
+            dmx_s1  <= S_det_minx;  dmx_s2  <= dmx_s1;
+            dmxx_s1 <= S_det_maxx;  dmxx_s2 <= dmxx_s1;
+            dmy_s1  <= S_det_miny;  dmy_s2  <= dmy_s1;
+            dmyx_s1 <= S_det_maxy;  dmyx_s2 <= dmyx_s1;
+            dv_s1   <= S_det_valid; dv_s2   <= dv_s1;
+            dc_s1   <= S_det_cand;  dc_s2   <= dc_s1;
+            dn_s1   <= S_det_cnt;   dn_s2   <= dn_s1;
+            ar_s1 <= S_avg_r; ar_s2 <= ar_s1;
+            ag_s1 <= S_avg_g; ag_s2 <= ag_s1;
+            ab_s1 <= S_avg_b; ab_s2 <= ab_s1;
+
+            if (S_hdmi_user) begin
+                S_avg_r_p <= ar_s2;
+                S_avg_g_p <= ag_s2;
+                S_avg_b_p <= ab_s2;
+                S_det_minx_p  <= dmx_s2;
+                S_det_maxx_p  <= dmxx_s2;
+                S_det_miny_p  <= dmy_s2;
+                S_det_maxy_p  <= dmyx_s2;
+                S_det_valid_p <= dv_s2;
+                S_det_cand_p  <= dc_s2;
+                S_det_cnt_p   <= dn_s2;
+            end
         end
     end
 
@@ -1040,6 +1109,16 @@ isp_top u_isp_top (
 .I_tdest         (),
 .I_mode          (S_mode_csi2),
 .I_pal           (S_pal_csi2),
+.O_det_minx      (S_det_minx),
+.O_det_maxx      (S_det_maxx),
+.O_det_miny      (S_det_miny),
+.O_det_maxy      (S_det_maxy),
+.O_det_valid     (S_det_valid),
+.O_det_cand      (S_det_cand),
+.O_det_cnt       (S_det_cnt),
+.O_rgb_r         (S_avg_r),
+.O_rgb_g         (S_avg_g),
+.O_rgb_b         (S_avg_b),
 .O_tready        (S_ISP_O_tready),
 .O_tdata         (S_ISP_O_tdata ),
 .O_tlast         (S_ISP_O_tlast ),
@@ -1211,6 +1290,16 @@ isp_top u_isp_top (
         .I_fps_value     ( S_fps_value      ),
         .I_mode          ( S_mode_pix2      ),
         .I_lat           ( S_lat_pix2       ),
+        .I_det_minx      ( S_det_minx_p     ),
+        .I_det_maxx      ( S_det_maxx_p     ),
+        .I_det_miny      ( S_det_miny_p     ),
+        .I_det_maxy      ( S_det_maxy_p     ),
+        .I_det_valid     ( S_det_valid_p    ),
+        .I_det_cand      ( S_det_cand_p     ),
+        .I_det_cnt       ( S_det_cnt_p      ),
+        .I_avg_r         ( S_avg_r_p        ),
+        .I_avg_g         ( S_avg_g_p        ),
+        .I_avg_b         ( S_avg_b_p        ),
         .O_video_rd_en   ( S_hdmi_window_rd_en),
         .I_video_rd_data ( S_video_rd_data    ),
         .O_hdmi_vsync    ( S_hdmi_out_vsync   ),
