@@ -33,6 +33,10 @@ module isp_top #(
     input  wire       I_cal_trig	,   // 一键标定请求（CSI 域，单拍电平事件）
     output reg  [1:0] O_cal_st		,   // 0=空闲 1=BUSY 2=OK 3=ERR
     output reg        O_frm_tgl		,   // 每帧尾翻转一次（供整组快照握手）
+    // Independent red-ball result; yellow outputs above are unchanged.
+    output wire [11:0] O_red_minx, O_red_maxx, O_red_miny, O_red_maxy,
+    output wire O_red_valid, O_red_cand, O_red_update,
+    output wire [9:0] O_red_count,
     input 			O_tready		,
     output [127:0] 	O_tdata			,
     output 			O_tlast			,
@@ -410,7 +414,7 @@ awb #(
     //   每条各自排除什么：
     //     R > B, G > B   白/灰面 R≈G≈B 过不了；青/蓝/紫/品红/红 过不了
     //     |R-G| <= G/8   红绿物体过不了 —— 黄色必须 R≈G（相对尺度）
-    //     G-B   >= G/8   饱和度太低的近灰物体过不了（相对尺度）
+    //     G-B   >= G/4   饱和度太低的近灰物体过不了（相对尺度）
     //     4(G-B) >= 3(R-B)  原有比例判据，抑制 R 远高于 G 的橙色/肤色
     //     G >= MIN_LUM   绝对噪声地板，暗处噪点直接滤掉
     //
@@ -434,7 +438,7 @@ awb #(
     //   这是实板"大部分时间没框"最可能的原因之一。
     //   现在改为：
     //     |R-G| <= G/8      （R 与 G 的相对接近程度，尺度无关）
-    //     (G-B) >= G/8      （黄色饱和度下限，尺度无关）
+    //     (G-B) >= G/4      （黄色饱和度下限，尺度无关；G/8 在暗场会被色度噪声穿透）
     //     4(G-B) >= 3(R-B)  （原有比例判据，本来就尺度无关，保留）
     //     G >= YEL_MIN_LUM  （绝对噪声地板，保留：暗处不可信）
     //     R > B 且 G > B    （取代原来的 +16 偏移）
@@ -457,7 +461,7 @@ awb #(
                 (px[23:16] >  px[7:0])    &&                // R > B
                 (px[15:8]  >  px[7:0])    &&                // G > B
                 ((rg << 3) <= {3'b0, px[15:8]}) &&          // |R-G| <= G/8
-                ((gb << 3) >= {3'b0, px[15:8]}) &&          // G-B  >= G/8
+                ((gb << 2) >= {3'b0, px[15:8]}) &&          // G-B  >= G/4
                 ((gb << 2) >= (rb + rb + rb));              // 4(G-B) >= 3(R-B)
         end
     endfunction
@@ -575,6 +579,16 @@ awb #(
                       (S_cal_st != CAL_ERR);
     wire S_det_mask;
     assign S_det_mask = S_cal_busy || (S_mask_hold != 8'd0);
+
+    red_ball_detect_96 u_red_ball (
+        .I_clk(axi4s_video_aclk), .I_rst_n(I_rst_n),
+        .I_enable(!S_det_mask), .I_valid(S_det_valid), .I_data(S_det_data),
+        .I_x(S_det_x), .I_y(S_det_y),
+        .O_minx(O_red_minx), .O_maxx(O_red_maxx),
+        .O_miny(O_red_miny), .O_maxy(O_red_maxy),
+        .O_valid(O_red_valid), .O_cand(O_red_cand),
+        .O_count(O_red_count), .O_update(O_red_update)
+    );
 
     isp_span_acc u_span_acc (
         .I_clk   (axi4s_video_aclk),
