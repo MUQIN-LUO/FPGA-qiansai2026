@@ -116,6 +116,49 @@ module design_top_wrapper (
     wire [11:0] S_det_minx, S_det_maxx, S_det_miny, S_det_maxy;
     wire        S_det_valid, S_det_cand;
     wire [9:0]  S_det_cnt;
+    // ---- 一键标定 / 检测结果整组快照 ----
+    reg  [31:0] S_k1_cnt;
+    reg         S_k1_fired;
+    reg         S_cal_tgl;
+    wire [1:0]  S_cal_st;
+    reg  [1:0]  S_cal_st_l;   // 上一拍的标定状态，用于状态变化即时上报
+    // 先声明：帧率统计（更靠前的位置）和 CSI 快照都要用
+    reg  [9:0] S_fps_latched;
+    wire       S_isp_frm_tgl;
+
+    // ---- 跨域快照：完整 payload + 请求/应答（不再逐位 2FF）----
+    //   CSI 域把一帧的整组结果先写进 staging，等上一次事务被 ack 之后
+    //   才整体搬进 payload 并翻转请求。payload 从翻转到收到 ack 之间
+    //   绝不会被改写，所以对端读到的必然是同一帧的一组值。
+    reg  [11:0] S_stg_minx, S_stg_maxx, S_stg_miny, S_stg_maxy;
+    reg         S_stg_valid, S_stg_cand;
+    reg  [ 9:0] S_stg_cnt;
+    reg  [ 1:0] S_stg_cal;
+    reg  [ 9:0] S_stg_gr, S_stg_gb;
+    reg  [ 7:0] S_stg_ar, S_stg_ag, S_stg_ab;
+    reg         S_stg_vld;
+    reg         S_ack1, S_ack2, S_ack_tgl;
+    reg  [ 9:0] S_sn_gr, S_sn_gb, S_rc_gr, S_rc_gb;
+    reg  [ 7:0] S_sn_ar, S_sn_ag, S_sn_ab, S_rc_ar, S_rc_ag, S_rc_ab;
+    reg         S_cal_t1, S_cal_t2, S_cal_t3;
+    wire        S_cal_trig = S_cal_t2 ^ S_cal_t3;
+
+    reg  [11:0] S_sn_minx, S_sn_maxx, S_sn_miny, S_sn_maxy;
+    reg         S_sn_valid, S_sn_cand;
+    reg  [9:0]  S_sn_cnt;
+    reg  [1:0]  S_sn_cal;
+    reg         S_sn_tgl;
+    reg         S_ft1, S_ft2, S_ft3;
+    wire        S_frm_evt = S_ft2 ^ S_ft3;
+
+    reg  [11:0] S_rc_minx, S_rc_maxx, S_rc_miny, S_rc_maxy;
+    reg         S_rc_valid, S_rc_cand;
+    reg  [9:0]  S_rc_cnt;
+    reg  [1:0]  S_rc_cal;
+    reg         S_st1, S_st2, S_st3;
+    wire        S_snap_evt = S_st2 ^ S_st3;
+    reg  [1:0]  S_cal_st_p;
+
     reg  [11:0] S_det_minx_p, S_det_maxx_p, S_det_miny_p, S_det_maxy_p;
     reg         S_det_valid_p, S_det_cand_p;
     reg  [9:0]  S_det_cnt_p;
@@ -126,6 +169,9 @@ module design_top_wrapper (
 
     wire [7:0]  S_lum;          // ISP 全帧 G 均值（像素域）
     wire        S_lum_tgl;      // 每帧翻转一次的握手电平
+
+    wire [9:0]  S_gr100, S_gb100;           // 当前白平衡增益 x100（ISP 域）
+    reg  [9:0]  S_gr100_p, S_gb100_p;       // 锁存到像素域供 OSD 显示
 
     wire        S_ddr_user_wr_en;       
     wire        S_ddr_user_rd_en;       
@@ -280,7 +326,8 @@ module design_top_wrapper (
     // ------------------------------------------------------------------
     localparam integer BTN_DEBOUNCE = 1000000;   // 50 MHz x 20 ms
 
-    reg [3:0]  S_btn_q;          // 同步后的按键电平
+    reg [3:0]  S_btn_q;          // 异步按键第 1 拍
+    reg [3:0]  S_btn_q2;         // 异步按键第 2 拍（先去两级再去抖）
     reg [3:0]  S_btn_st;         // 消抖后的稳定值
     reg [3:0]  S_btn_st_d;       // 稳定值再打一拍，用于取下降沿
     reg [19:0] S_btn_cnt0;
@@ -294,6 +341,7 @@ module design_top_wrapper (
     always @(posedge I_sys_clk or negedge I_rst_n) begin
         if (!I_rst_n) begin
             S_btn_q     <= 4'b1111;
+            S_btn_q2    <= 4'b1111;
             S_btn_st    <= 4'b1111;
             S_btn_st_d  <= 4'b1111;
             S_btn_cnt0  <= 20'd0;
@@ -304,12 +352,13 @@ module design_top_wrapper (
         end
         else begin
             S_btn_q    <= I_button;
+            S_btn_q2   <= S_btn_q;
             S_btn_st_d <= S_btn_st;
 
             // KEY1
-            if (S_btn_q[0] != S_btn_st[0]) begin
+            if (S_btn_q2[0] != S_btn_st[0]) begin
                 if (S_btn_cnt0 >= BTN_DEBOUNCE) begin
-                    S_btn_st[0] <= S_btn_q[0];
+                    S_btn_st[0] <= S_btn_q2[0];
                     S_btn_cnt0  <= 20'd0;
                 end
                 else S_btn_cnt0 <= S_btn_cnt0 + 20'd1;
@@ -317,9 +366,9 @@ module design_top_wrapper (
             else S_btn_cnt0 <= 20'd0;
 
             // KEY2
-            if (S_btn_q[1] != S_btn_st[1]) begin
+            if (S_btn_q2[1] != S_btn_st[1]) begin
                 if (S_btn_cnt1 >= BTN_DEBOUNCE) begin
-                    S_btn_st[1] <= S_btn_q[1];
+                    S_btn_st[1] <= S_btn_q2[1];
                     S_btn_cnt1  <= 20'd0;
                 end
                 else S_btn_cnt1 <= S_btn_cnt1 + 20'd1;
@@ -327,9 +376,9 @@ module design_top_wrapper (
             else S_btn_cnt1 <= 20'd0;
 
             // KEY3
-            if (S_btn_q[2] != S_btn_st[2]) begin
+            if (S_btn_q2[2] != S_btn_st[2]) begin
                 if (S_btn_cnt2 >= BTN_DEBOUNCE) begin
-                    S_btn_st[2] <= S_btn_q[2];
+                    S_btn_st[2] <= S_btn_q2[2];
                     S_btn_cnt2  <= 20'd0;
                 end
                 else S_btn_cnt2 <= S_btn_cnt2 + 20'd1;
@@ -337,9 +386,9 @@ module design_top_wrapper (
             else S_btn_cnt2 <= 20'd0;
 
             // KEY4
-            if (S_btn_q[3] != S_btn_st[3]) begin
+            if (S_btn_q2[3] != S_btn_st[3]) begin
                 if (S_btn_cnt3 >= BTN_DEBOUNCE) begin
-                    S_btn_st[3] <= S_btn_q[3];
+                    S_btn_st[3] <= S_btn_q2[3];
                     S_btn_cnt3  <= 20'd0;
                 end
                 else S_btn_cnt3 <= S_btn_cnt3 + 20'd1;
@@ -524,6 +573,7 @@ module design_top_wrapper (
     reg        dc_s1,   dc_s2;
     reg [9:0]  dn_s1,   dn_s2;
     reg [7:0]  ar_s1, ar_s2, ag_s1, ag_s2, ab_s1, ab_s2;
+    reg [9:0]  gr_s1, gr_s2, gb_s1, gb_s2;
 
     always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin
         if (!S_hdmi_rst_n) begin
@@ -537,12 +587,24 @@ module design_top_wrapper (
             ar_s1 <= 8'd0; ar_s2 <= 8'd0;
             ag_s1 <= 8'd0; ag_s2 <= 8'd0;
             ab_s1 <= 8'd0; ab_s2 <= 8'd0;
+            gr_s1 <= 10'd0; gr_s2 <= 10'd0;
+            gb_s1 <= 10'd0; gb_s2 <= 10'd0;
+            S_gr100_p <= 10'd0; S_gb100_p <= 10'd0;
             S_avg_r_p <= 8'd0; S_avg_g_p <= 8'd0; S_avg_b_p <= 8'd0;
             S_det_minx_p <= 12'd0; S_det_maxx_p <= 12'd0;
             S_det_miny_p <= 12'd0; S_det_maxy_p <= 12'd0;
             S_det_valid_p <= 1'b0;
             S_det_cand_p  <= 1'b0;
             S_det_cnt_p   <= 10'd0;
+            S_cal_st_p    <= 2'd0;
+            S_rc_minx <= 12'd0; S_rc_maxx <= 12'd0;
+            S_rc_miny <= 12'd0; S_rc_maxy <= 12'd0;
+            S_rc_valid<= 1'b0;  S_rc_cand <= 1'b0;
+            S_rc_cnt <= 10'd0;  S_rc_cal  <= 2'd0;
+            S_st1 <= 1'b0; S_st2 <= 1'b0; S_st3 <= 1'b0;
+            S_ack_tgl <= 1'b0;
+            S_rc_gr <= 10'd0; S_rc_gb <= 10'd0;
+            S_rc_ar <= 8'd0; S_rc_ag <= 8'd0; S_rc_ab <= 8'd0;
         end
         else begin
             dmx_s1  <= S_det_minx;  dmx_s2  <= dmx_s1;
@@ -555,18 +617,148 @@ module design_top_wrapper (
             ar_s1 <= S_avg_r; ar_s2 <= ar_s1;
             ag_s1 <= S_avg_g; ag_s2 <= ag_s1;
             ab_s1 <= S_avg_b; ab_s2 <= ab_s1;
+            gr_s1 <= S_gr100; gr_s2 <= gr_s1;
+            gb_s1 <= S_gb100; gb_s2 <= gb_s1;
+
+            // 整组接收：只在 tgl 边沿整段拷入
+            S_st1 <= S_sn_tgl;
+            S_st2 <= S_st1;
+            S_st3 <= S_st2;
+            if (S_snap_evt) begin
+                // 一次事务把整组一起搬走，并立刻回 ack
+                S_rc_minx  <= S_sn_minx;
+                S_rc_maxx  <= S_sn_maxx;
+                S_rc_miny  <= S_sn_miny;
+                S_rc_maxy  <= S_sn_maxy;
+                S_rc_valid <= S_sn_valid;
+                S_rc_cand  <= S_sn_cand;
+                S_rc_cnt   <= S_sn_cnt;
+                S_rc_cal   <= S_sn_cal;
+                S_rc_gr    <= S_sn_gr;
+                S_rc_gb    <= S_sn_gb;
+                S_rc_ar    <= S_sn_ar;
+                S_rc_ag    <= S_sn_ag;
+                S_rc_ab    <= S_sn_ab;
+                S_ack_tgl  <= ~S_ack_tgl;
+            end
 
             if (S_hdmi_user) begin
-                S_avg_r_p <= ar_s2;
-                S_avg_g_p <= ag_s2;
-                S_avg_b_p <= ab_s2;
-                S_det_minx_p  <= dmx_s2;
-                S_det_maxx_p  <= dmxx_s2;
-                S_det_miny_p  <= dmy_s2;
-                S_det_maxy_p  <= dmyx_s2;
-                S_det_valid_p <= dv_s2;
-                S_det_cand_p  <= dc_s2;
-                S_det_cnt_p   <= dn_s2;
+                // 显示帧边界提交：整帧用同一份快照，不会撕裂
+                S_gr100_p <= S_rc_gr;
+                S_gb100_p <= S_rc_gb;
+                S_avg_r_p <= S_rc_ar;
+                S_avg_g_p <= S_rc_ag;
+                S_avg_b_p <= S_rc_ab;
+                S_det_minx_p  <= S_rc_minx;
+                S_det_maxx_p  <= S_rc_maxx;
+                S_det_miny_p  <= S_rc_miny;
+                S_det_maxy_p  <= S_rc_maxy;
+                S_det_valid_p <= S_rc_valid;
+                S_det_cand_p  <= S_rc_cand;
+                S_det_cnt_p   <= S_rc_cnt;
+                S_cal_st_p    <= S_rc_cal;
+            end
+        end
+    end
+
+    // ---- KEY1 长按 1.5 s 触发一次白纸标定（50 MHz 域）----
+    //   短按仍是 RAW（原下降沿逻辑不变）；长按只发一次，松手才允许下次。
+    localparam [31:0] K1_LONG = 32'd75_000_000;   // 50 MHz x 1.5 s
+
+    always @(posedge I_sys_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_k1_cnt   <= 32'd0;
+            S_k1_fired <= 1'b0;
+            S_cal_tgl  <= 1'b0;
+        end
+        else if (!S_btn_st[0]) begin
+            if (S_k1_cnt != K1_LONG)
+                S_k1_cnt <= S_k1_cnt + 32'd1;
+            if ((S_k1_cnt == (K1_LONG - 32'd1)) && !S_k1_fired) begin
+                S_cal_tgl  <= ~S_cal_tgl;
+                S_k1_fired <= 1'b1;
+            end
+        end
+        else begin
+            S_k1_cnt   <= 32'd0;
+            S_k1_fired <= 1'b0;
+        end
+    end
+
+    // ---- CSI 域：标定请求同步 + 检测结果整组快照 ----
+    //   数据先稳定、再翻 tgl；接收侧见到沿时整组已稳，比逐位两拍可靠。
+    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+        if (!S_rst_n) begin
+            S_cal_t1 <= 1'b0; S_cal_t2 <= 1'b0; S_cal_t3 <= 1'b0;
+            S_ft1 <= 1'b0; S_ft2 <= 1'b0; S_ft3 <= 1'b0;
+            S_sn_minx <= 12'd0; S_sn_maxx <= 12'd0;
+            S_sn_miny <= 12'd0; S_sn_maxy <= 12'd0;
+            S_sn_valid <= 1'b0; S_sn_cand <= 1'b0;
+            S_sn_cnt <= 10'd0;  S_sn_cal <= 2'd0;  S_sn_tgl <= 1'b0;
+            S_cal_st_l <= 2'd0;
+            S_stg_vld <= 1'b0;
+            S_ack1 <= 1'b0;     S_ack2 <= 1'b0;
+            S_stg_minx <= 12'd0; S_stg_maxx <= 12'd0;
+            S_stg_miny <= 12'd0; S_stg_maxy <= 12'd0;
+            S_stg_valid <= 1'b0; S_stg_cand <= 1'b0;
+            S_stg_cnt <= 10'd0;  S_stg_cal <= 2'd0;
+            S_stg_gr <= 10'd0;   S_stg_gb <= 10'd0;
+            S_stg_ar <= 8'd0;    S_stg_ag <= 8'd0;  S_stg_ab <= 8'd0;
+            S_sn_gr <= 10'd0;    S_sn_gb <= 10'd0;
+            S_sn_ar <= 8'd0;     S_sn_ag <= 8'd0;   S_sn_ab <= 8'd0;
+        end
+        else begin
+            S_cal_t1 <= S_cal_tgl;
+            S_cal_t2 <= S_cal_t1;
+            S_cal_t3 <= S_cal_t2;
+            S_ft1 <= S_isp_frm_tgl;
+            S_ft2 <= S_ft1;
+            S_ft3 <= S_ft2;
+            S_cal_st_l <= S_cal_st;
+            S_ack1 <= S_ack_tgl;
+            S_ack2 <= S_ack1;
+            // ---- 请求/应答 ----
+            //   空闲条件用【真实的请求电平】S_sn_tgl 与收到的 ack 比较，
+            //   不是另造一个从不翻转的 S_sn_req（那样首包之后条件恒假，
+            //   第二包永远发不出去）。
+            //   优先级：本拍若既有新事件又要发送，发送搬走的是【旧】staging
+            //   （非阻塞读），新事件继续留在 staging 并把 pending 保持为 1，
+            //   所以后面的 S_stg_vld <= S_new_evt 必须写在发送分支之后。
+            if (S_frm_evt || (S_cal_st != S_cal_st_l)) begin
+                S_stg_minx  <= S_det_minx;
+                S_stg_maxx  <= S_det_maxx;
+                S_stg_miny  <= S_det_miny;
+                S_stg_maxy  <= S_det_maxy;
+                S_stg_valid <= S_det_valid;
+                S_stg_cand  <= S_det_cand;
+                S_stg_cnt   <= S_det_cnt;
+                S_stg_cal   <= S_cal_st;
+                S_stg_gr    <= S_gr100;      // awb 实际生效的增益
+                S_stg_gb    <= S_gb100;
+                S_stg_ar    <= S_avg_r;      // 中心 ROI 均值
+                S_stg_ag    <= S_avg_g;
+                S_stg_ab    <= S_avg_b;
+                S_stg_vld   <= 1'b1;
+            end
+            // 上一次事务已被 ack 才发下一组，保证 payload 保持窗口完整
+            if (S_stg_vld && (S_sn_tgl == S_ack2)) begin
+                S_sn_minx  <= S_stg_minx;
+                S_sn_maxx  <= S_stg_maxx;
+                S_sn_miny  <= S_stg_miny;
+                S_sn_maxy  <= S_stg_maxy;
+                S_sn_valid <= S_stg_valid;
+                S_sn_cand  <= S_stg_cand;
+                S_sn_cnt   <= S_stg_cnt;
+                S_sn_cal   <= S_stg_cal;
+                S_sn_gr    <= S_stg_gr;
+                S_sn_gb    <= S_stg_gb;
+                S_sn_ar    <= S_stg_ar;
+                S_sn_ag    <= S_stg_ag;
+                S_sn_ab    <= S_stg_ab;
+                S_sn_tgl   <= ~S_sn_tgl;
+                // 同拍若又来了新事件：上面已把新值写进 staging，
+                // 这里必须保持 pending=1，否则断流后的最后一个 ERR 会被吞掉。
+                S_stg_vld  <= (S_frm_evt || (S_cal_st != S_cal_st_l));
             end
         end
     end
@@ -578,7 +770,6 @@ module design_top_wrapper (
     // ------------------------------------------------------------------
     reg [2:0]  S_tick_500ms_sync;
     reg [9:0]  S_fps_cnt;
-    reg [9:0]  S_fps_latched;
     reg        S_fps_toggle;
     reg [2:0]  S_fps_tog_sync;
     reg [9:0]  S_fps_value;
@@ -976,9 +1167,12 @@ module design_top_wrapper (
 
   // AE 闭环控制器（替代原厂按键手动 AE，模块在 uiisp_beta/ae_set.v 内）
   ae_ctrl #(
-      .AE_INIT   (16'd1990),   // 与原厂默认一致，上电不跳变
-      .AG_INIT   (16'd144 ),   // 16x 模拟增益
-      .AE_TARGET (8'd96   )    // 目标亮度，O_lum 单位（满量程 224）
+      // Low-noise operating point: long exposure, unity initial gain.
+      // SC520GainTbl: 16=1x, 48=2x, 80=4x, 96=6x (digital fine gain).
+      .AE_INIT   (16'd1991),
+      .AG_INIT   (16'd16  ),
+      .AG_MAX    (16'd80  ),
+      .AE_TARGET (8'd64   )
   ) u_ae_ctrl (
       .I_clk          (S_24m_clk      ),
       .I_rst          (~S_rst_n       ),
@@ -1155,6 +1349,11 @@ isp_top u_isp_top (
 .O_rgb_b         (S_avg_b),
 .O_lum           (S_lum),
 .O_lum_tgl       (S_lum_tgl),
+.O_gr100         (S_gr100),
+.O_gb100         (S_gb100),
+.I_cal_trig      (S_cal_trig),
+.O_cal_st        (S_cal_st),
+.O_frm_tgl       (S_isp_frm_tgl),
 .O_tready        (S_ISP_O_tready),
 .O_tdata         (S_ISP_O_tdata ),
 .O_tlast         (S_ISP_O_tlast ),
@@ -1336,6 +1535,9 @@ isp_top u_isp_top (
         .I_avg_r         ( S_avg_r_p        ),
         .I_avg_g         ( S_avg_g_p        ),
         .I_avg_b         ( S_avg_b_p        ),
+        .I_gr100         ( S_gr100_p        ),
+        .I_gb100         ( S_gb100_p        ),
+        .I_cal_st        ( S_cal_st_p       ),
         .O_video_rd_en   ( S_hdmi_window_rd_en),
         .I_video_rd_data ( S_video_rd_data    ),
         .O_hdmi_vsync    ( S_hdmi_out_vsync   ),

@@ -28,6 +28,9 @@ module hdmi_mixer #(
     input wire[7:0]   I_avg_r,          // 中心区域平均色（调试显示）
     input wire[7:0]   I_avg_g,
     input wire[7:0]   I_avg_b,
+    input wire[9:0]   I_gr100,          // 当前白平衡增益 x100（如 123 = 1.23x）
+    input wire[9:0]   I_gb100,
+    input wire[1:0]   I_cal_st,          // 一键标定状态 0/1/2/3
 
     output wire       O_video_rd_en,
     input wire[23:0]  I_video_rd_data,
@@ -107,7 +110,7 @@ module hdmi_mixer #(
     localparam integer OSD_ADV   = OSD_CELL * OSD_SCALE;    // 字距 30
     localparam integer OSD_W     = 8 * OSD_ADV;             // 240（最长一行 LAT:33MS）
     localparam integer OSD_ROWH  = OSD_CELL * OSD_SCALE;    // 30  单行高
-    localparam integer OSD_H     = 5 * OSD_ROWH;            // 150 五行
+    localparam integer OSD_H     = 6 * OSD_ROWH;            // 180 六行（第 5 行显示白平衡增益）
     localparam integer OSD_TOP   = 24;                      // 上边距
     localparam integer OSD_X0    = 24;                      // 左边距
 
@@ -117,13 +120,16 @@ module hdmi_mixer #(
     wire [11:0] S_osd_ox = S_x_2d - OSD_X0;
     wire [11:0] S_osd_oy = S_y_2d - OSD_TOP;
 
-    // 第 0 行帧率，第 1 行算法，第 2 行延迟，第 3 行 R/G，第 4 行 B
-    wire [2:0]  S_osd_ridx = (S_osd_oy >= (4*OSD_ROWH)) ? 3'd4 :
+    // 第 0 行帧率，第 1 行算法，第 2 行延迟，第 3 行 R/G，第 4 行 B，
+    // 第 5 行白平衡增益（R123B185 表示 R=1.23x、B=1.85x）
+    wire [2:0]  S_osd_ridx = (S_osd_oy >= (5*OSD_ROWH)) ? 3'd5 :
+                             (S_osd_oy >= (4*OSD_ROWH)) ? 3'd4 :
                              (S_osd_oy >= (3*OSD_ROWH)) ? 3'd3 :
                              (S_osd_oy >= (2*OSD_ROWH)) ? 3'd2 :
                              (S_osd_oy >= OSD_ROWH)     ? 3'd1 : 3'd0;
     wire [11:0] S_osd_oyr  = S_osd_oy -
-                             ((S_osd_ridx == 3'd4) ? 4*OSD_ROWH :
+                             ((S_osd_ridx == 3'd5) ? 5*OSD_ROWH :
+                              (S_osd_ridx == 3'd4) ? 4*OSD_ROWH :
                               (S_osd_ridx == 3'd3) ? 3*OSD_ROWH :
                               (S_osd_ridx == 3'd2) ? 2*OSD_ROWH :
                               (S_osd_ridx == 3'd1) ? OSD_ROWH   : 0);
@@ -225,6 +231,49 @@ module hdmi_mixer #(
     wire [3:0] S_ag_o = S_ag_m[3:0];
     wire [3:0] S_ab_o = S_ab_m[3:0];
 
+    // ---- 白平衡增益 x100（0~260）拆百/十/个位 ----
+    //   量程比平均值大（增益最大 2.60x -> 260），所以百位要用 9 位比较
+    function [1:0] div100_299;
+        input [8:0] x;
+        begin
+            if      (x >= 9'd200) div100_299 = 2'd2;
+            else if (x >= 9'd100) div100_299 = 2'd1;
+            else                  div100_299 = 2'd0;
+        end
+    endfunction
+
+    wire [1:0] S_gr_h = div100_299(I_gr100[8:0]);
+    wire [1:0] S_gb_h = div100_299(I_gb100[8:0]);
+
+    wire [8:0] S_gr_r = I_gr100[8:0] - (({7'd0,S_gr_h} << 6) + ({7'd0,S_gr_h} << 5) + ({7'd0,S_gr_h} << 2));
+    wire [8:0] S_gb_r = I_gb100[8:0] - (({7'd0,S_gb_h} << 6) + ({7'd0,S_gb_h} << 5) + ({7'd0,S_gb_h} << 2));
+
+    wire [3:0] S_gr_t = div10_99(S_gr_r[6:0]);
+    wire [3:0] S_gb_t = div10_99(S_gb_r[6:0]);
+
+    wire [6:0] S_gr_m = S_gr_r[6:0] - ({3'd0,S_gr_t} << 3) - ({3'd0,S_gr_t} << 1);
+    wire [6:0] S_gb_m = S_gb_r[6:0] - ({3'd0,S_gb_t} << 3) - ({3'd0,S_gb_t} << 1);
+
+    wire [3:0] S_gr_o = S_gr_m[3:0];
+    wire [3:0] S_gb_o = S_gb_m[3:0];
+
+    // 增益每帧才变一次，译码结果打一拍完全不影响显示，
+    // 但能把这一串比较/减法从 OSD 的组合链上摘下来（原来一路串到
+    // 字形查找和输出 mux，是这次时序违例的帮凶之一）
+    reg [1:0] S_gr_h_q; reg [3:0] S_gr_t_q, S_gr_o_q;
+    reg [1:0] S_gb_h_q; reg [3:0] S_gb_t_q, S_gb_o_q;
+
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_gr_h_q <= 2'd0; S_gr_t_q <= 4'd0; S_gr_o_q <= 4'd0;
+            S_gb_h_q <= 2'd0; S_gb_t_q <= 4'd0; S_gb_o_q <= 4'd0;
+        end
+        else begin
+            S_gr_h_q <= S_gr_h; S_gr_t_q <= S_gr_t; S_gr_o_q <= S_gr_o;
+            S_gb_h_q <= S_gb_h; S_gb_t_q <= S_gb_t; S_gb_o_q <= S_gb_o;
+        end
+    end
+
     // ---- 检测像素数（0~999）拆成三位，供调试显示 ----
     reg [3:0] S_dc_h;
     always @(*) begin
@@ -297,6 +346,8 @@ module hdmi_mixer #(
                                      (I_mode == 2'd2) ? 5'd17 : 5'd1;    // W / G / A / P
                     3'd3: S_osd_ch = (I_mode == 2'd1) ? 5'd19 :
                                      (I_mode == 2'd2) ? 5'd22 : 5'd15;   // E / Y / 空白
+                    3'd4: S_osd_ch = 5'd28;                              // C
+                    3'd5: S_osd_ch = 5'd4 + {3'd0, I_cal_st};            // 标定状态 0/1/2/3
                     default: S_osd_ch = 5'd15;
                 endcase
             end
@@ -321,6 +372,19 @@ module hdmi_mixer #(
                     3'd2:    S_osd_ch = 5'd4 + S_ab_t;
                     3'd3:    S_osd_ch = 5'd4 + S_ab_o;
                     default: S_osd_ch = 5'd15;
+                endcase
+            end
+            3'd5: begin
+                // 第 5 行：当前白平衡增益  R123B185  =  R 1.23x、B 1.85x
+                case (S_osd_slot)
+                    3'd0:    S_osd_ch = 5'd16;               // R
+                    3'd1:    S_osd_ch = 5'd4 + S_gr_h_q;
+                    3'd2:    S_osd_ch = 5'd4 + S_gr_t_q;
+                    3'd3:    S_osd_ch = 5'd4 + S_gr_o_q;
+                    3'd4:    S_osd_ch = 5'd27;               // B
+                    3'd5:    S_osd_ch = 5'd4 + S_gb_h_q;
+                    3'd6:    S_osd_ch = 5'd4 + S_gb_t_q;
+                    default: S_osd_ch = 5'd4 + S_gb_o_q;
                 endcase
             end
             3'd2: begin
@@ -364,6 +428,36 @@ module hdmi_mixer #(
     wire [3:0] S_gy  = ((S_osd_celly >= 4'd1) && (S_osd_celly <= 4'd8)) ? (S_osd_celly - 4'd1) : 4'd15;
     wire [3:0] S_gym = ((S_osd_celly >= 4'd2) && (S_osd_celly <= 4'd9)) ? (S_osd_celly - 4'd2) : 4'd15;
     wire [3:0] S_gyp = (S_osd_celly <= 4'd7) ? S_osd_celly : 4'd15;
+
+    // ------------------------------------------------------------------
+    // OSD 查表输入打一拍
+    //   路径：x/y -> 分槽 -> ÷3 -> 字形坐标 -> glyph_row(30 选 1 大 case)
+    //         -> 行内取位 -> 8 邻域描边 -> 输出 mux -> O_hdmi_data
+    //   实测 13.0ns / 13.333ns，只有 +9ps 余量，且走线占 6 成，属布线敏感。
+    //   这里把【查表输入】寄存一拍，让大 case 从寄存器起步，直接砍掉
+    //   x/y 到字形坐标这一段组合链。
+    //   OSD 是静态叠加，晚一拍只是整体右移 1 个像素，肉眼不可见；
+    //   取样框 S_osd_box 同步延迟，保证"框"和"字"仍然对齐。
+    // ------------------------------------------------------------------
+    reg        S_osd_box_q;
+    reg [4:0]  S_osd_ch_q;
+    reg [3:0]  S_gx_q, S_gxm_q, S_gxp_q;
+    reg [3:0]  S_gy_q, S_gym_q, S_gyp_q;
+
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_osd_box_q <= 1'b0;
+            S_osd_ch_q  <= 5'd15;
+            S_gx_q  <= 4'd15; S_gxm_q <= 4'd15; S_gxp_q <= 4'd15;
+            S_gy_q  <= 4'd15; S_gym_q <= 4'd15; S_gyp_q <= 4'd15;
+        end
+        else begin
+            S_osd_box_q <= S_osd_box;
+            S_osd_ch_q  <= S_osd_ch;
+            S_gx_q  <= S_gx;  S_gxm_q <= S_gxm; S_gxp_q <= S_gxp;
+            S_gy_q  <= S_gy;  S_gym_q <= S_gym; S_gyp_q <= S_gyp;
+        end
+    end
 
     // ---- 8x8 点阵字模，bit0 为最左像素 ----
     function [7:0] osd_font;
@@ -521,6 +615,12 @@ module hdmi_mixer #(
                     3'd4: osd_font = 8'h63; 3'd5: osd_font = 8'h63;
                     3'd6: osd_font = 8'h63; default: osd_font = 8'h00;
                 endcase
+                5'd28: case (row)  // C
+                    3'd0: osd_font = 8'h3C; 3'd1: osd_font = 8'h66;
+                    3'd2: osd_font = 8'h60; 3'd3: osd_font = 8'h60;
+                    3'd4: osd_font = 8'h60; 3'd5: osd_font = 8'h66;
+                    3'd6: osd_font = 8'h3C; default: osd_font = 8'h00;
+                endcase
                 5'd27: case (row)  // B
                     3'd0: osd_font = 8'h1F; 3'd1: osd_font = 8'h63;
                     3'd2: osd_font = 8'h63; 3'd3: osd_font = 8'h1F;
@@ -542,19 +642,19 @@ module hdmi_mixer #(
         end
     endfunction
 
-    wire [15:0] S_row_c = {8'b0, glyph_row(S_osd_ch, S_gy )};
-    wire [15:0] S_row_m = {8'b0, glyph_row(S_osd_ch, S_gym)};
-    wire [15:0] S_row_p = {8'b0, glyph_row(S_osd_ch, S_gyp)};
+    wire [15:0] S_row_c = {8'b0, glyph_row(S_osd_ch_q, S_gy_q )};
+    wire [15:0] S_row_m = {8'b0, glyph_row(S_osd_ch_q, S_gym_q)};
+    wire [15:0] S_row_p = {8'b0, glyph_row(S_osd_ch_q, S_gyp_q)};
 
-    wire S_pix_c  = S_row_c[S_gx ];
-    wire S_pix_l  = S_row_c[S_gxm];
-    wire S_pix_r  = S_row_c[S_gxp];
-    wire S_pix_u  = S_row_m[S_gx ];
-    wire S_pix_d  = S_row_p[S_gx ];
-    wire S_pix_ul = S_row_m[S_gxm];
-    wire S_pix_ur = S_row_m[S_gxp];
-    wire S_pix_dl = S_row_p[S_gxm];
-    wire S_pix_dr = S_row_p[S_gxp];
+    wire S_pix_c  = S_row_c[S_gx_q ];
+    wire S_pix_l  = S_row_c[S_gxm_q];
+    wire S_pix_r  = S_row_c[S_gxp_q];
+    wire S_pix_u  = S_row_m[S_gx_q ];
+    wire S_pix_d  = S_row_p[S_gx_q ];
+    wire S_pix_ul = S_row_m[S_gxm_q];
+    wire S_pix_ur = S_row_m[S_gxp_q];
+    wire S_pix_dl = S_row_p[S_gxm_q];
+    wire S_pix_dr = S_row_p[S_gxp_q];
 
     wire S_osd_green = S_pix_c;                       // 字形：亮绿
     wire S_osd_black = ~S_pix_c &&                    // 描边：8 邻域有字形则涂黑
@@ -574,12 +674,37 @@ module hdmi_mixer #(
     wire S_logo_box = (S_x_2d >= LOGO_X) && (S_x_2d < (LOGO_X + LOGO_W)) &&
                       (S_y_2d >= LOGO_Y) && (S_y_2d < (LOGO_Y + LOGO_H));
 
-    wire [14:0] S_logo_addr = ((S_y_2d - LOGO_Y) * LOGO_W) + (S_x_2d - LOGO_X);
+    // 地址换算改成移位相加，不要乘法。
+    //   LOGO_W = 160 = 128 + 32，写成 (y<<7)+(y<<5)+x 后只剩一个加法器。
+    //   原来用 *160 综合出了 DSPMULT，路径变成
+    //     S_y_2d -> DSP乘法 -> 加法 -> ROM地址 -> ROM读 -> 输出mux -> 寄存器
+    //   实测 15.057ns / 13.333ns 预算（-2.112ns），其中 8.4ns 是走线。
+    //   移位是纯连线，能省下 DSP 那一级和它前后的大扇出网络。
+    wire [14:0] S_logo_relx = S_x_2d - LOGO_X;                       // x 相对 Logo 左边界
+    wire [14:0] S_logo_addr = (({3'd0,S_y_2d} << 7) + ({3'd0,S_y_2d} << 5)) + S_logo_relx;
     wire [24:0] S_logo_pixel;
 
+    // 【地址打一拍】实测该加法器输出一根网 fanout=551、单根走线 4.0ns，
+    //   占掉 13.3ns 预算的三分之一，是 OSD/Logo 合成路径走线占比 71% 的主因。
+    //   地址是"每像素一个值"的组合量，借一拍即可让它只驱动寄存器。
+    //   Logo 是静态叠加，晚一拍只是整体右移 1 像素，肉眼不可见；
+    //   S_logo_box 同步延迟，保证"框"与"像素"仍然配对。
+    reg  [14:0] S_logo_addr_q;
+    reg         S_logo_box_q;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_logo_addr_q <= 15'd0;
+            S_logo_box_q  <= 1'b0;
+        end
+        else begin
+            S_logo_addr_q <= S_logo_addr;
+            S_logo_box_q  <= S_logo_box;
+        end
+    end
+
     anlogic_logo_rom u_anlogic_logo_rom (
-        .I_addr  ( S_logo_addr  ),
-        .O_pixel ( S_logo_pixel )
+        .I_addr  ( S_logo_addr_q ),
+        .O_pixel ( S_logo_pixel  )
     );
 
     // ==================================================================
@@ -721,7 +846,7 @@ module hdmi_mixer #(
                         default: O_hdmi_data <= 24'hffffff;
                     endcase
                     // 诊断页也叠加 FPS，便于同时确认帧率
-                    if(S_osd_box) begin
+                    if(S_osd_box_q) begin
                         if(S_osd_green)
                             O_hdmi_data <= 24'h00ff00;
                         else if(S_osd_black)
@@ -742,10 +867,10 @@ module hdmi_mixer #(
                     else if(SHOW_CB && S_cb_edge)
                         O_hdmi_data <= 24'hff0000;
                     // 安路 Logo：右上角，仅非透明像素覆盖
-                    else if(S_logo_box && S_logo_pixel[24])
+                    else if(S_logo_box_q && S_logo_pixel[24])
                         O_hdmi_data <= S_logo_pixel[23:0];
                     // FPS OSD：背景透明，仅字形（亮绿）和描边（黑）覆盖画面
-                    else if(S_osd_box) begin
+                    else if(S_osd_box_q) begin
                         if(S_osd_green)
                             O_hdmi_data <= 24'h00ff00;
                         else if(S_osd_black)

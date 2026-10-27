@@ -41,7 +41,7 @@
  *     曝光时间长 = 收集的光子多 = 信噪比好；模拟增益是"事后放大"，
  *     噪声一起放大。所以只要曝光还有余量就不碰增益。
  *     不足时：曝光加到 AE_MAX，再提增益；
- *     过量时：曝光减到 AE_MIN，再降增益。
+ *     过量时：先降增益到 AG_MIN，再缩短曝光。
  *
  *  4) 两次调整之间强制隔 AE_HOLDOFF 帧
  *     传感器改曝光后要 1~2 帧才体现到画面上，60Hz 连续追会把噪声
@@ -61,9 +61,9 @@ module ae_ctrl #(
     parameter [15:0] AE_INIT    = 16'd1990,  // 上电初值，与原厂默认一致，避免画面跳变
     parameter [15:0] AE_MIN     = 16'd16,
     parameter [15:0] AE_MAX     = 16'd1991,  // = 2*VTS - 9，VTS=1000
-    parameter [15:0] AG_INIT    = 16'd144,   // 索引 144 -> 0x3e09=0x0f，即 16x 模拟
+    parameter [15:0] AG_INIT    = 16'd16 ,   // Start at unity gain; increase only when exposure is exhausted
     parameter [15:0] AG_MIN     = 16'd16,    // 1x
-    parameter [15:0] AG_MAX     = 16'd176,   // 32x
+    parameter [15:0] AG_MAX     = 16'd80 ,   // 4x total gain cap
     parameter [7:0]  AE_TARGET  = 8'd96,     // 目标亮度（I_lum 单位，满量程 224）
     parameter [7:0]  AE_DEAD    = 8'd6,      // 死区，防抖
     parameter [7:0]  AE_HOLDOFF = 8'd4       // 两次调整之间至少隔几帧
@@ -114,12 +114,13 @@ module ae_ctrl #(
                 end
             end
             else begin
-                // 偏亮：先减曝光，曝光到底再降增益
-                if (O_ae > AE_MIN) begin
-                    n_ae = (O_ae < (AE_MIN + ae_step_m)) ? AE_MIN : (O_ae - ae_step_m);
-                end
-                else if (O_ag > AG_MIN) begin
+                // Bright: remove excess gain before shortening exposure.
+                // This avoids settling at short exposure and amplified noise.
+                if (O_ag > AG_MIN) begin
                     n_ag = (O_ag < (AG_MIN + ag_step)) ? AG_MIN : (O_ag - ag_step);
+                end
+                else if (O_ae > AE_MIN) begin
+                    n_ae = (O_ae < (AE_MIN + ae_step_m)) ? AE_MIN : (O_ae - ae_step_m);
                 end
             end
         end
@@ -170,6 +171,7 @@ module ae_ctrl #(
                     if (!init_done && can_issue) begin
                         O_ae      <= AE_INIT;
                         O_ag      <= AG_INIT;
+                        hold      <= AE_HOLDOFF;
                         O_ae_req  <= 1'b1;
                         init_done <= 1'b1;
                         tmo       <= 20'd0;
