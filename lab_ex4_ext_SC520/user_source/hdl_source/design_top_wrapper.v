@@ -116,6 +116,12 @@ module design_top_wrapper (
     wire [11:0] S_det_minx, S_det_maxx, S_det_miny, S_det_maxy;
     wire        S_det_valid, S_det_cand;
     wire [9:0]  S_det_cnt;
+    // Red ball has its own result and handshake; yellow CDC remains unchanged.
+    wire [11:0] S_red_minx, S_red_maxx, S_red_miny, S_red_maxy;
+    wire S_red_valid, S_red_cand, S_red_update;
+    wire [9:0] S_red_count;
+    wire [59:0] S_red_pixel_snapshot;
+
     // ---- 一键标定 / 检测结果整组快照 ----
     reg  [31:0] S_k1_cnt;
     reg         S_k1_fired;
@@ -1344,6 +1350,14 @@ isp_top u_isp_top (
 .O_det_valid     (S_det_valid),
 .O_det_cand      (S_det_cand),
 .O_det_cnt       (S_det_cnt),
+.O_red_minx      (S_red_minx),
+.O_red_maxx      (S_red_maxx),
+.O_red_miny      (S_red_miny),
+.O_red_maxy      (S_red_maxy),
+.O_red_valid     (S_red_valid),
+.O_red_cand      (S_red_cand),
+.O_red_count     (S_red_count),
+.O_red_update    (S_red_update),
 .O_rgb_r         (S_avg_r),
 .O_rgb_g         (S_avg_g),
 .O_rgb_b         (S_avg_b),
@@ -1361,6 +1375,15 @@ isp_top u_isp_top (
 .O_tvalid        (S_ISP_O_tvalid),
 .I_tready        ()
   );
+
+    red_ball_snapshot_cdc u_red_snapshot (
+        .I_src_clk(S_csi_rx_clk), .I_src_rst_n(S_rst_n),
+        .I_src_update(S_red_update),
+        .I_src_data({S_red_valid,S_red_cand,S_red_count,
+                     S_red_minx,S_red_maxx,S_red_miny,S_red_maxy}),
+        .I_dst_clk(S_hdmi_pixel_clk), .I_dst_rst_n(S_hdmi_rst_n),
+        .I_dst_frame(S_hdmi_user), .O_dst_data(S_red_pixel_snapshot)
+    );
 
 
     video_in u_video_in(
@@ -1532,6 +1555,11 @@ isp_top u_isp_top (
         .I_det_valid     ( S_det_valid_p    ),
         .I_det_cand      ( S_det_cand_p     ),
         .I_det_cnt       ( S_det_cnt_p      ),
+        .I_red_valid     ( S_red_pixel_snapshot[59]    ),
+        .I_red_minx      ( S_red_pixel_snapshot[47:36] ),
+        .I_red_maxx      ( S_red_pixel_snapshot[35:24] ),
+        .I_red_miny      ( S_red_pixel_snapshot[23:12] ),
+        .I_red_maxy      ( S_red_pixel_snapshot[11:0]  ),
         .I_avg_r         ( S_avg_r_p        ),
         .I_avg_g         ( S_avg_g_p        ),
         .I_avg_b         ( S_avg_b_p        ),

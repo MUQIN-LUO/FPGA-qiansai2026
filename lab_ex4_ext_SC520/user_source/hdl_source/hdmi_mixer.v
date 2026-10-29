@@ -25,6 +25,8 @@ module hdmi_mixer #(
     input wire        I_det_valid,
     input wire        I_det_cand,       // 颜色+面积通过但形状未过（调试用）
     input wire[9:0]   I_det_cnt,        // 命中像素数/16（调试显示）
+    input wire        I_red_valid,
+    input wire[11:0]  I_red_minx, I_red_maxx, I_red_miny, I_red_maxy,
     input wire[7:0]   I_avg_r,          // 中心区域平均色（调试显示）
     input wire[7:0]   I_avg_g,
     input wire[7:0]   I_avg_b,
@@ -731,6 +733,20 @@ module hdmi_mixer #(
     //   把被测物体（白纸 / 黄卷尺）对进这个框，OSD 第 3、4 行的读数
     //   就是它本身的 R/G/B。演示时把 SHOW_CB 置 0 即可隐藏。
     // ==================================================================
+    // Registered one stage before pixel output to keep HDMI timing short.
+    // Cyan identifies the new red ball; yellow retains green/orange and priority.
+    wire S_red_inside = I_red_valid &&
+        (S_x_1d >= I_red_minx) && (S_x_1d <= I_red_maxx) &&
+        (S_y_1d >= I_red_miny) && (S_y_1d <= I_red_maxy);
+    wire S_red_edge = S_red_inside &&
+        ((S_x_1d < I_red_minx + BOX_T) || (S_x_1d + BOX_T > I_red_maxx) ||
+         (S_y_1d < I_red_miny + BOX_T) || (S_y_1d + BOX_T > I_red_maxy));
+    reg S_red_edge_q;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) S_red_edge_q <= 1'b0;
+        else S_red_edge_q <= S_red_edge;
+    end
+
     localparam integer CB_X0 = 608;
     localparam integer CB_Y0 = 328;
     localparam integer CB_W  = 64;
@@ -863,6 +879,8 @@ module hdmi_mixer #(
                     // 黄色目标外接框：绿=完全通过，橙=形状未通过
                     if(S_box_edge)
                         O_hdmi_data <= I_det_valid ? 24'h00ff00 : 24'hff8000;
+                    else if(S_red_edge_q)
+                        O_hdmi_data <= 24'h00ffff;
                     // 中心取样框：红色细框（标定用，和被检测框重叠时让检测框优先）
                     else if(SHOW_CB && S_cb_edge)
                         O_hdmi_data <= 24'hff0000;
