@@ -26,6 +26,7 @@ module isp_top #(
     parameter        AWB_MODE     = 1'b0
 ) (
     input 			axi4s_video_aclk,
+    input 			I_ccl_src_clk,   // 50 MHz 系统时钟（与 MIPI 异步），供 CCL 域使用
     input 			I_rst_n			,
     input 			I_tlast			,
     input 			I_tuser			,
@@ -725,6 +726,29 @@ awb #(
     // ------------------------------------------------------------------
     // 圆形检测（颜色无关，需求 1）。与下面的红/黄颜色通路并行存在，
     // 最终由 DET_MODE 选择哪一个去驱动 O_det_*。
+    //
+    // 【时钟域分离】
+    //   CCL 的标签表更新路径在 9.66 ns 内无法收敛（实测 27 级、净延迟 69%、
+    //   slice 利用率 80.8%）。这里把 CCL 放到 50 MHz 系统时钟 /2 的
+    //   25.00 MHz 异步域（40 ns，与 MIPI 不同源），掩膜经同步 FIFO 跨域；
+    //   25.00 M 拍/s 仍高于有效像素流 13.824 M 拍/s，吞吐满足。
+    // ------------------------------------------------------------------
+    // CCL 时钟：50 MHz 系统时钟 /2 = 25 MHz，与 MIPI 字节时钟**真正异步**
+    // （传感器 MIPI 时钟 vs 板载 50 MHz 晶振，不同源）。跨域全部按标准异步
+    // CDC（格雷码指针 / toggle / 电平 + 2FF）处理，避免同源分频带来的
+    // 3.3 ns 域间偏斜与同步器首级 hold 违例，且不需要任何 false path。
+    reg ccl_div2;
+    always @(posedge I_ccl_src_clk or negedge I_rst_n) begin
+        if (!I_rst_n) ccl_div2 <= 1'b0;
+        else          ccl_div2 <= ~ccl_div2;
+    end
+    wire ccl_clk_raw = ccl_div2;        // 25.0 MHz (40 ns)
+    wire ccl_clk;
+    PH1P_LOGIC_BUFG u_ccl_bufg (.i(ccl_clk_raw), .o(ccl_clk));
+
+    // ------------------------------------------------------------------
+    // CCL 桥（掩膜 FIFO / 坐标重建 / CCL / 丢拍恢复 / 结果 CDC）
+    //   设计与回归测试实例化同一份 isp_ccl_bridge.v，测试台不再手写镜像。
     // ------------------------------------------------------------------
     wire [23:0] S_shape_cnt;
     wire [20:0] S_shape_span;
@@ -733,51 +757,44 @@ awb #(
     wire [11:0] S_shape_minx, S_shape_maxx, S_shape_miny, S_shape_maxy;
     wire        S_shape_evt, S_shape_pass, S_shape_cand;
     wire        S_shape_ok_size, S_shape_ok_asp, S_shape_ok_rows, S_shape_ok_chord;
+    wire [3:0]  S_shape_lab;
+    wire        S_shape_ovf;
 
-    // ------------------------------------------------------------------
-    // 连通域圆形判据（替换"整帧单一累加器"的 isp_circle_detect）
-    //   旧实现整帧一个 bbox：只要有背景边缘，bbox 就等于整帧，圆被判据吞掉。
-    //   实测（上板 + 仿真）：前景掩膜命中整帧 100% 的拍，bbox=1280x720，
-    //   宽高比 1.78 直接被拒 —— 所以手持球在任何杂乱背景里都不可能出框。
-    //   isp_ccl_circle 逐行游程 + 15 标签并查集，只在**同一个连通域内部**
-    //   统计弦长，于是背景边缘不会再污染外接框和弦长比。
-    //   接口与原模块一致（O_span -> O_chord，单位由像素变格），因此是等价替换。
-    // ------------------------------------------------------------------
-    wire [3:0] S_shape_lab;
-    wire       S_shape_ovf;
-
-    isp_ccl_circle #(
+    isp_ccl_bridge #(
         .IMG_WIDTH (1280),
-        .IMG_HEIGHT(720 ),
+        .IMG_HEIGHT(720),
         .MIN_W_PX  (CIRC_MIN_W),
         .MAX_W_PX  (CIRC_MAX_W),
         .MIN_CELLS (CIRC_MIN_W[11:2])
-    ) u_circle_detect (
-        .I_clk    (axi4s_video_aclk),
-        .I_rst_n  (I_rst_n),
-        .I_clr    (S_det_mask),
-        .I_valid  (S_fg_valid),
-        .I_hit    (S_fg_mask),
-        .I_x      (S_fg_x),
-        .I_y      (S_fg_y),
-        .O_evt    (S_shape_evt),
-        .O_w      (S_shape_w),
-        .O_h      (S_shape_h),
-        .O_cnt    (S_shape_cnt),
-        .O_chord  (S_shape_span),
-        .O_rows   (S_shape_rows),
-        .O_minx   (S_shape_minx),
-        .O_maxx   (S_shape_maxx),
-        .O_miny   (S_shape_miny),
-        .O_maxy   (S_shape_maxy),
-        .O_pass   (S_shape_pass),
-        .O_cand   (S_shape_cand),
-        .O_ok_size(S_shape_ok_size),
-        .O_ok_asp (S_shape_ok_asp),
-        .O_ok_rows(S_shape_ok_rows),
-        .O_ok_chord(S_shape_ok_chord),
-        .O_lab    (S_shape_lab),
-        .O_ovf    (S_shape_ovf)
+    ) u_ccl_bridge (
+        .I_mipi_clk (axi4s_video_aclk),
+        .I_rst_n    (I_rst_n),
+        .I_fg_valid (S_fg_valid),
+        .I_fg_mask  (S_fg_mask),
+        .I_fg_tuser (S_fg_tuser),
+        .I_fg_tlast (S_fg_tlast),
+        .I_det_mask (S_det_mask),
+        .I_ccl_clk  (ccl_clk),
+        .O_evt      (S_shape_evt),
+        .O_w        (S_shape_w),
+        .O_h        (S_shape_h),
+        .O_cnt      (S_shape_cnt),
+        .O_chord    (S_shape_span),
+        .O_rows     (S_shape_rows),
+        .O_minx     (S_shape_minx),
+        .O_maxx     (S_shape_maxx),
+        .O_miny     (S_shape_miny),
+        .O_maxy     (S_shape_maxy),
+        .O_pass     (S_shape_pass),
+        .O_cand     (S_shape_cand),
+        .O_ok_size  (S_shape_ok_size),
+        .O_ok_asp   (S_shape_ok_asp),
+        .O_ok_rows  (S_shape_ok_rows),
+        .O_ok_chord (S_shape_ok_chord),
+        .O_lab      (S_shape_lab),
+        .O_ovf      (S_shape_ovf),
+        .O_dbg_full (),
+        .O_dbg_drop ()
     );
 
     // 红球（颜色判据）通路：DET_MODE=1 时才送到画面上。
@@ -1738,6 +1755,14 @@ wire use_right = m_aixs_tvalid && !last_d1 && !m_aixs_tuser;
 
 reg [95:0] S_dn_d1, S_dn_d2;
 reg        S_dn_v1, S_dn_u1, S_dn_l1;
+// 【再拆一级】色差样本先寄存，再做 3 点中值：把 8 个加减从"中值+重建"路径前移。
+reg [9:0]  S_chr_q [0:5];
+reg [9:0]  S_chb_q [0:5];
+reg [7:0]  S_gv1_q [0:3];
+reg        S_dn_v3i, S_dn_u3i, S_dn_l3i;
+wire [9:0] S_chr [0:5];
+wire [9:0] S_chb [0:5];
+integer    qk;
 
 
 always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
@@ -1749,20 +1774,37 @@ always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
         S_dn_v2i <= 1'b0;
         S_dn_u2i <= 1'b0;
         S_dn_l2i <= 1'b0;
+        S_dn_v3i <= 1'b0;
+        S_dn_u3i <= 1'b0;
+        S_dn_l3i <= 1'b0;
+        for (qk = 0; qk < 6; qk = qk + 1) begin
+            S_chr_q[qk] <= 10'd0;
+            S_chb_q[qk] <= 10'd0;
+        end
+        for (qk = 0; qk < 4; qk = qk + 1) S_gv1_q[qk] <= 8'd0;
     end
     else begin
         S_dn_d1 <= m_aixs_tdata_96;
         S_dn_d2 <= S_dn_d1;
         S_dn_v1 <= m_aixs_tvalid;
         S_dn_v2i <= S_dn_v1;
+        S_dn_v3i <= S_dn_v2i;
         S_dn_u1 <= m_aixs_tuser;
         S_dn_u2i <= S_dn_u1;
+        S_dn_u3i <= S_dn_u2i;
         S_dn_l1 <= m_aixs_tlast;
         S_dn_l2i <= S_dn_l1;
-        // 第三级：与重建流水对齐后送出端口
-        S_dn_v2 <= S_dn_v2i;
-        S_dn_u2 <= S_dn_u2i;
-        S_dn_l2 <= S_dn_l2i;
+        S_dn_l3i <= S_dn_l2i;
+        // 色差样本寄存（第 2 级）
+        for (qk = 0; qk < 6; qk = qk + 1) begin
+            S_chr_q[qk] <= S_chr[qk];
+            S_chb_q[qk] <= S_chb[qk];
+        end
+        for (qk = 0; qk < 4; qk = qk + 1) S_gv1_q[qk] <= S_dn_d1[qk*24+8 +: 8];
+        // 第 4 级：与重建流水对齐后送出端口
+        S_dn_v2 <= S_dn_v3i;
+        S_dn_u2 <= S_dn_u3i;
+        S_dn_l2 <= S_dn_l3i;
     end
 end
 
@@ -1772,8 +1814,6 @@ end
 //   [5]     = 当前拍第 0 个像素（上一拍第 3 个像素的右邻居）
 // 色差用 "通道 + 256 - G" 表示成 10bit 无符号量：单调偏置不改变中位数，
 // 但避免了有符号比较的麻烦。
-wire [9:0] S_chr [0:5];
-wire [9:0] S_chb [0:5];
 
 genvar dc;
 generate
@@ -1804,8 +1844,8 @@ wire [7:0] S_gvv [0:3];
 genvar dn;
 generate
     for (dn = 0; dn < 4; dn = dn + 1) begin : g_den
-        wire [9:0] a_r = S_chr[dn],     b_r = S_chr[dn+1], c_r = S_chr[dn+2];
-        wire [9:0] a_b = S_chb[dn],     b_b = S_chb[dn+1], c_b = S_chb[dn+2];
+        wire [9:0] a_r = S_chr_q[dn],   b_r = S_chr_q[dn+1], c_r = S_chr_q[dn+2];
+        wire [9:0] a_b = S_chb_q[dn],   b_b = S_chb_q[dn+1], c_b = S_chb_q[dn+2];
 
         wire [9:0] mn_r  = (a_r < b_r) ? a_r : b_r;
         wire [9:0] mx_r  = (a_r < b_r) ? b_r : a_r;
@@ -1819,9 +1859,9 @@ generate
 
         // DEN_EN=0 时取中心样本本身：重建回去就是原像素，
         // 这样旁路和正常路径的流水深度一致，不需要额外的对齐。
-        assign S_mdr[dn] = DEN_EN ? md_r   : S_chr[dn+1];
-        assign S_mdb[dn] = DEN_EN ? md_b   : S_chb[dn+1];
-        assign S_gvv[dn] = S_dn_d1[dn*24+8 +: 8];
+        assign S_mdr[dn] = DEN_EN ? md_r   : S_chr_q[dn+1];
+        assign S_mdb[dn] = DEN_EN ? md_b   : S_chb_q[dn+1];
+        assign S_gvv[dn] = S_gv1_q[dn];
     end
 endgenerate
 

@@ -80,18 +80,29 @@ function [13:0] sobel_mag;
     end
 endfunction
 
-// Two Sobel windows are evaluated per input beat. Each result is duplicated
+// Two Sobel windows are evaluated per input beat.  Each result is duplicated
 // to its corresponding pair of output pixels.
-wire [13:0] mag0 = sobel_mag(top_prev2,top_prev1,top0,
-                             mid_prev2,mid_prev1,mid0,
-                             bot_prev2,bot_prev1,pair0);
-wire [13:0] mag1 = sobel_mag(top_prev1,top0,top1,
-                             mid_prev1,mid0,mid1,
-                             bot_prev1,pair0,pair1);
-
+//
+// 流水化：第 1 级捕获 3x3 窗口（RAM 读 + 行内滑动），第 2 级做 Sobel 与比较。
+// 这样把"RAM 读 + 9 个加减 + 门限比较"从一拍拆成两拍；总 latency 由 1 拍变 2 拍，
+// isp_fg_mask 的色度延迟同步 +1，掩膜与像素仍逐拍对齐。
 wire window_valid = (y_pos >= 11'd2) && (x_grp != 11'd0) && !I_tuser;
-wire edge0 = window_valid && (mag0 >= EDGE_TH);
-wire edge1 = window_valid && (mag1 >= EDGE_TH);
+
+reg [7:0] w_t2, w_t1, w_t0, w_tp1;
+reg [7:0] w_m2, w_m1, w_m0, w_mp1;
+reg [7:0] w_b2, w_b1, w_p0, w_p1;
+reg       w_winvalid, w_valid;
+reg       O_tlast_s1, O_tuser_s1, O_tvalid_s1;
+
+wire [13:0] mag0 = sobel_mag(w_t2,w_t1,w_t0,
+                             w_m2,w_m1,w_m0,
+                             w_b2,w_b1,w_p0);
+wire [13:0] mag1 = sobel_mag(w_t1,w_t0,w_tp1,
+                             w_m1,w_m0,w_mp1,
+                             w_b1,w_p0,w_p1);
+
+wire edge0 = w_winvalid && (mag0 >= EDGE_TH);
+wire edge1 = w_winvalid && (mag1 >= EDGE_TH);
 
 wire [23:0] out0 = edge0 ? 24'hffffff : 24'h000000;
 wire [23:0] out1 = edge1 ? 24'hffffff : 24'h000000;
@@ -102,21 +113,36 @@ always @(posedge I_clk or negedge I_rst_n) begin
         O_tuser  <= 1'b0;
         O_tdata  <= 96'd0;
         O_tvalid <= 1'b0;
+        O_tlast_s1 <= 1'b0; O_tuser_s1 <= 1'b0; O_tvalid_s1 <= 1'b0;
         x_grp    <= 11'd0;
         y_pos    <= 11'd0;
         top_prev2 <= 8'd0; top_prev1 <= 8'd0;
         mid_prev2 <= 8'd0; mid_prev1 <= 8'd0;
         bot_prev2 <= 8'd0; bot_prev1 <= 8'd0;
-        // Do not clear line memories here.  A reset loop turns the 10-Kbit
-        // buffers into slice registers on this device.  The first two rows
-        // are masked by window_valid and naturally initialize both buffers.
+        w_t2<=8'd0; w_t1<=8'd0; w_t0<=8'd0; w_tp1<=8'd0;
+        w_m2<=8'd0; w_m1<=8'd0; w_m0<=8'd0; w_mp1<=8'd0;
+        w_b2<=8'd0; w_b1<=8'd0; w_p0<=8'd0; w_p1<=8'd0;
+        w_winvalid<=1'b0; w_valid<=1'b0;
     end else begin
-        O_tlast  <= I_tlast;
-        O_tuser  <= I_tuser;
-        O_tvalid <= I_tvalid;
+        // ---- 第 1 级：控制与数据都进一级寄存器 ----
+        O_tlast_s1  <= I_tlast;
+        O_tuser_s1  <= I_tuser;
+        O_tvalid_s1 <= I_tvalid;
+        w_valid     <= I_tvalid;
+
+        // ---- 第 2 级：输出 ----
+        O_tlast  <= O_tlast_s1;
+        O_tuser  <= O_tuser_s1;
+        O_tvalid <= O_tvalid_s1;
+        if (w_valid) O_tdata <= {out0,out0,out1,out1};
+        else         O_tdata <= 96'd0;
 
         if(I_tvalid) begin
-            O_tdata <= {out0,out0,out1,out1};
+            // 窗口捕获（与下面的行缓存读写同拍）
+            w_t2 <= top_prev2; w_t1 <= top_prev1; w_t0 <= top0; w_tp1 <= top1;
+            w_m2 <= mid_prev2; w_m1 <= mid_prev1; w_m0 <= mid0; w_mp1 <= mid1;
+            w_b2 <= bot_prev2; w_b1 <= bot_prev1; w_p0 <= pair0; w_p1 <= pair1;
+            w_winvalid <= window_valid;
 
             line2_mem[x_grp] <= mid_word;
             line1_mem[x_grp] <= bot_word;
@@ -140,8 +166,6 @@ always @(posedge I_clk or negedge I_rst_n) begin
             end else begin
                 x_grp <= x_grp + 1'b1;
             end
-        end else begin
-            O_tdata <= 96'd0;
         end
     end
 end

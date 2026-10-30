@@ -1335,6 +1335,7 @@ assign S_raw_tuser  = S_axis_tuser;
 //ISP算法顶层模块
 isp_top u_isp_top (
 .axi4s_video_aclk(S_csi_rx_clk),
+.I_ccl_src_clk   (I_sys_clk),
 .I_rst_n         (S_rst_n),
 .I_tlast         (S_raw_tlast	),
 .I_tuser         (S_raw_tuser	),
