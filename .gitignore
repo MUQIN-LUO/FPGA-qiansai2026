@@ -35,3 +35,12 @@ parsetab.py
 
 # ---- 官方 OSD 样例副本（仅本地参考，不纳入版本管理） ----
 lab_ex3_osd_SC520/
+
+# ---- RTLens/TD 运行产物与备份（体积大、可再生，不入库）----
+_backup_before_*/
+*.tdbak-*
+*.tdbak
+lab_ex4_ext_SC520/td_project/camera_to_dsi_display_Runs/
+*.db
+*.bid
+*.mif.dat

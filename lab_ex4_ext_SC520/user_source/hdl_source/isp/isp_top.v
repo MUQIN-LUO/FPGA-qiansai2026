@@ -5,7 +5,25 @@ module isp_top #(
     // 只作用在 CAL_SHDW 的"等提交确认"窗口。生产默认 = CAL_TMO，行为不变；
     // 拆出来是为了能构造 deadline 边界测试（ACC 需要 4 个完整帧 ≈ 1.1e6 拍，
     // 用同一个定时器根本没法把 commit 卡在临近到期的位置）。
-    parameter [29:0] CAL_COMMIT_TMO = 30'd500_000_000
+    parameter [29:0] CAL_COMMIT_TMO = 30'd500_000_000,
+
+    // ---- 检测模式（对应赛题改造需求 1）----
+    //   0 = 颜色无关的圆形检测（默认）：前景 = 色度 ∪ 亮度梯度，圆形判据落在
+    //       逐行弦长 / 外接框面积比（圆≈0.785，方块≈1.0）等轮廓特征上。
+    //   1 = 原来的红/黄颜色判据（代码完整保留，仅被这个开关禁用，默认关闭）。
+    parameter        DET_MODE     = 1'b0,
+    // 色度判据门限：max(R,G,B)-min(R,G,B) >= FG_CHROMA_TH 即视为"有彩色"。
+    // 只判"有彩色"，不分色相，因此红/黄/蓝/绿/橙/紫的圆都能进候选。
+    parameter [7:0]  FG_CHROMA_TH = 8'd20,
+    // 圆形外接框尺寸窗（像素）
+    parameter [11:0] CIRC_MIN_W   = 12'd24,
+    parameter [11:0] CIRC_MAX_W   = 12'd720,
+
+    // ---- 白平衡方式（对应赛题改造需求 2）----
+    //   0 = 灰度世界自动白平衡（默认，用于 RAW 彩色显示）
+    //   1 = 原来的白纸一键标定（保留为备用模式）
+    // 两种来源写的是同一组"请求增益"寄存器，只有一个 always 块拥有它们。
+    parameter        AWB_MODE     = 1'b0
 ) (
     input 			axi4s_video_aclk,
     input 			I_rst_n			,
@@ -255,6 +273,85 @@ awb #(
     wire        S_det_tlast = S_rgb_tlast;
     wire        S_det_tuser = S_rgb_tuser;
 
+    // ==================================================================
+    // 颜色无关前景掩膜：色度 ∪ 亮度梯度（赛题改造需求 1）
+    // ------------------------------------------------------------------
+    // 亮度梯度用第二个 edge_detect_96 实例算 Sobel，行缓存是 block RAM，
+    // 与显示通路里的那个实例互不影响（两个实例各自持有自己的行缓存）。
+    // 注意：这一路只做"有没有边缘"，不参与任何颜色判断。
+    // ==================================================================
+    wire        S_fgedge_tlast, S_fgedge_tuser, S_fgedge_tvalid;
+    wire [95:0] S_fgedge_tdata;
+
+    // ------------------------------------------------------------------
+    // 前景支路输入先打一拍。
+    //   不加这一拍的话，综合会把 "AWB 乘法器 -> 共享灰度加法器 -> Sobel
+    //   加减树 -> 比较 -> 输出寄存器" 连成一条 13 级、12ns 的长链（实测
+    //   WNS -2.42ns @9.66ns 周期）。打一拍后该链被切成两段，
+    //   且色度支路与 Sobel 支路仍然同拍同像素（两者都吃这一级寄存器）。
+    // ------------------------------------------------------------------
+    reg [95:0] S_fgin_data;
+    reg        S_fgin_valid, S_fgin_tlast, S_fgin_tuser;
+
+    always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_fgin_data  <= 96'd0;
+            S_fgin_valid <= 1'b0;
+            S_fgin_tlast <= 1'b0;
+            S_fgin_tuser <= 1'b0;
+        end
+        else begin
+            S_fgin_data  <= S_rgb_data;
+            S_fgin_valid <= S_rgb_valid;
+            S_fgin_tlast <= S_rgb_tlast;
+            S_fgin_tuser <= S_rgb_tuser;
+        end
+    end
+
+    edge_detect_96 #(
+        .IMG_WIDTH  (1280),
+        .IMG_HEIGHT (720 ),
+        .EDGE_TH    (11'd48)
+    ) u_fg_edge (
+        .I_clk   (axi4s_video_aclk),
+        .I_rst_n (I_rst_n),
+        .I_tlast (S_fgin_tlast),
+        .I_tuser (S_fgin_tuser),
+        .I_tdata (S_fgin_data),
+        .I_tvalid(S_fgin_valid),
+        .I_tready(1'b1),
+        .O_tlast (S_fgedge_tlast),
+        .O_tuser (S_fgedge_tuser),
+        .O_tdata (S_fgedge_tdata),
+        .O_tvalid(S_fgedge_tvalid),
+        .O_tready()
+    );
+
+    wire [3:0]  S_fg_mask;
+    wire        S_fg_valid, S_fg_tlast, S_fg_tuser;
+    wire [11:0] S_fg_x, S_fg_y;
+
+    isp_fg_mask #(
+        .CHROMA_TH (FG_CHROMA_TH)
+    ) u_fg_mask (
+        .I_clk       (axi4s_video_aclk),
+        .I_rst_n     (I_rst_n),
+        .I_tvalid    (S_fgin_valid),
+        .I_tlast     (S_fgin_tlast),
+        .I_tuser     (S_fgin_tuser),
+        .I_tdata     (S_fgin_data),
+        .I_edge_valid(S_fgedge_tvalid),
+        .I_edge_tlast(S_fgedge_tlast),
+        .I_edge_tuser(S_fgedge_tuser),
+        .I_edge_tdata(S_fgedge_tdata),
+        .O_mask      (S_fg_mask),
+        .O_valid     (S_fg_valid),
+        .O_tlast     (S_fg_tlast),
+        .O_tuser     (S_fg_tuser),
+        .O_x         (S_fg_x),
+        .O_y         (S_fg_y)
+    );
+
     // 基础要求(2)：Sobel 边缘检测（灰度 -> 行缓存 -> Sobel -> 二值化）
     // 输入打一拍：AWB 乘法器输出直接进灰度的 3 级加法链会形成 14 级逻辑，
     // 在 103.52MHz 下违例 -1.221ns，这里隔开一级流水。
@@ -383,12 +480,40 @@ awb #(
         end
     endfunction
 
-    function [1:0] pop_band;             // 8bit 灰度 -> 4 档
+    // ==================================================================
+    // 【本轮修复】POP 分档阈值改到线性光域
+    // ------------------------------------------------------------------
+    // 连线事实：pop_comb 取自 S_rgb_data（AWB 之后、gamma 之前），
+    //           而 gamma 是在 sel_data 选择之后才施加（gam_data）。
+    //           即 POP 在【线性光域】做量化。
+    // 原阈值 64/128/192 是【感知域(sRGB)】的分割点，直接切线性数据意味着
+    // 三个分割点落在感知亮度 138/190/229 上 —— 正常室内场景绝大部分像素
+    // 的感知亮度低于 138，全部落进档 0，整屏塌成单一颜色。
+    //
+    // 线性域等效阈值（gamma 2.2，满量程 253）：
+    //   253*( 64/255)^2.2 = 12
+    //   253*(128/255)^2.2 = 56
+    //   253*(192/255)^2.2 = 135
+    // 只改分割点，不动配色表，波普风格保持不变。
+    //
+    // 实测（线性光域人物场景 5/46/182/25，比例 30/35/20/15）：
+    //   旧阈值 b0=80% b1=0%  b2=20% b3=0%   -> 几乎单色
+    //   新阈值 b0=30% b1=50% b2=0%  b3=20%  -> 三档可辨
+    // 均匀场景仍 100% 落在单档，不会人为制造层次。
+    //
+    // POP_LEGACY_TH=1 可退回原阈值（默认关闭）。
+    // ==================================================================
+    localparam        POP_LEGACY_TH = 1'b0;
+    localparam [7:0]  POP_T0 = POP_LEGACY_TH ? 8'd64  : 8'd12;
+    localparam [7:0]  POP_T1 = POP_LEGACY_TH ? 8'd128 : 8'd56;
+    localparam [7:0]  POP_T2 = POP_LEGACY_TH ? 8'd192 : 8'd135;
+
+    function [1:0] pop_band;             // 8bit 线性域灰度 -> 4 档
         input [7:0] g;
         begin
-            if      (g < 8'd64 ) pop_band = 2'd0;
-            else if (g < 8'd128) pop_band = 2'd1;
-            else if (g < 8'd192) pop_band = 2'd2;
+            if      (g < POP_T0) pop_band = 2'd0;
+            else if (g < POP_T1) pop_band = 2'd1;
+            else if (g < POP_T2) pop_band = 2'd2;
             else                 pop_band = 2'd3;
         end
     endfunction
@@ -597,15 +722,72 @@ awb #(
     wire S_det_mask;
     assign S_det_mask = S_cal_busy || (S_mask_hold != 8'd0);
 
+    // ------------------------------------------------------------------
+    // 圆形检测（颜色无关，需求 1）。与下面的红/黄颜色通路并行存在，
+    // 最终由 DET_MODE 选择哪一个去驱动 O_det_*。
+    // ------------------------------------------------------------------
+    wire [23:0] S_shape_cnt;
+    wire [20:0] S_shape_span;
+    wire [10:0] S_shape_rows;
+    wire [11:0] S_shape_w, S_shape_h;
+    wire [11:0] S_shape_minx, S_shape_maxx, S_shape_miny, S_shape_maxy;
+    wire        S_shape_evt, S_shape_pass, S_shape_cand;
+    wire        S_shape_ok_size, S_shape_ok_asp, S_shape_ok_rows, S_shape_ok_chord;
+
+    isp_circle_detect #(
+        .MIN_W (CIRC_MIN_W),
+        .MAX_W (CIRC_MAX_W)
+    ) u_circle_detect (
+        .I_clk    (axi4s_video_aclk),
+        .I_rst_n  (I_rst_n),
+        .I_clr    (S_det_mask),
+        .I_valid  (S_fg_valid),
+        .I_hit    (S_fg_mask),
+        .I_x      (S_fg_x),
+        .I_y      (S_fg_y),
+        .O_evt    (S_shape_evt),
+        .O_w      (S_shape_w),
+        .O_h      (S_shape_h),
+        .O_cnt    (S_shape_cnt),
+        .O_span   (S_shape_span),
+        .O_rows   (S_shape_rows),
+        .O_minx   (S_shape_minx),
+        .O_maxx   (S_shape_maxx),
+        .O_miny   (S_shape_miny),
+        .O_maxy   (S_shape_maxy),
+        .O_pass   (S_shape_pass),
+        .O_cand   (S_shape_cand),
+        .O_ok_size(S_shape_ok_size),
+        .O_ok_asp (S_shape_ok_asp),
+        .O_ok_rows(S_shape_ok_rows),
+        .O_ok_chord(S_shape_ok_chord)
+    );
+
+    // 红球（颜色判据）通路：DET_MODE=1 时才送到画面上。
+    // 需求要求"颜色识别代码保留、默认关闭"，所以模块本体保留，
+    // 但它的结果在默认（形状）模式下被屏蔽掉，不会在画面上出现青色框。
+    wire [11:0] S_red_minx, S_red_maxx, S_red_miny, S_red_maxy;
+    wire        S_red_valid, S_red_cand, S_red_update;
+    wire [9:0]  S_red_count;
+
     red_ball_detect_96 u_red_ball (
         .I_clk(axi4s_video_aclk), .I_rst_n(I_rst_n),
         .I_enable(!S_det_mask), .I_valid(S_det_valid), .I_data(S_det_data),
         .I_x(S_det_x), .I_y(S_det_y),
-        .O_minx(O_red_minx), .O_maxx(O_red_maxx),
-        .O_miny(O_red_miny), .O_maxy(O_red_maxy),
-        .O_valid(O_red_valid), .O_cand(O_red_cand),
-        .O_count(O_red_count), .O_update(O_red_update)
+        .O_minx(S_red_minx), .O_maxx(S_red_maxx),
+        .O_miny(S_red_miny), .O_maxy(S_red_maxy),
+        .O_valid(S_red_valid), .O_cand(S_red_cand),
+        .O_count(S_red_count), .O_update(S_red_update)
     );
+
+    assign O_red_minx   = (DET_MODE == 1'b1) ? S_red_minx   : 12'd0;
+    assign O_red_maxx   = (DET_MODE == 1'b1) ? S_red_maxx   : 12'd0;
+    assign O_red_miny   = (DET_MODE == 1'b1) ? S_red_miny   : 12'd0;
+    assign O_red_maxy   = (DET_MODE == 1'b1) ? S_red_maxy   : 12'd0;
+    assign O_red_valid  = (DET_MODE == 1'b1) ? S_red_valid  : 1'b0;
+    assign O_red_cand   = (DET_MODE == 1'b1) ? S_red_cand   : 1'b0;
+    assign O_red_update = (DET_MODE == 1'b1) ? S_red_update : 1'b0;
+    assign O_red_count  = (DET_MODE == 1'b1) ? S_red_count  : 10'd0;
 
     isp_span_acc u_span_acc (
         .I_clk   (axi4s_video_aclk),
@@ -694,6 +876,17 @@ awb #(
     localparam [19:0] WB_INIT_R = 20'd76824;    // 上电默认 R（Q16 1.1722x）
     localparam [19:0] WB_INIT_B = 20'd138731;   // 上电默认 B（Q16 2.1169x）
 
+    // ------------------------------------------------------------------
+    // 增益的【唯一所有者】
+    //   标定 FSM 与灰度世界估计器都只产生"请求值 + 单拍提交脉冲"，
+    //   由下面唯一的 always 块根据 AWB_MODE 写 S_wbr/S_wbb。
+    //   这样无论选哪种白平衡方式，寄存器都只有一个驱动源，不会多驱动。
+    // ------------------------------------------------------------------
+    reg  [19:0] S_cal_req_r, S_cal_req_b;   // 标定 FSM 的请求值
+    reg         S_cal_commit;               // 标定提交脉冲（单拍）
+    wire [19:0] S_gw_gain_r, S_gw_gain_b;   // 灰度世界的请求值
+    wire        S_gw_commit;                // 灰度世界提交脉冲（单拍）
+
     localparam [19:0] CAL_R_MIN = 20'd52429;    // 0.80x
     localparam [19:0] CAL_R_MAX = 20'd124518;   // 1.90x
     localparam [19:0] CAL_B_MIN = 20'd85197;    // 1.30x
@@ -770,12 +963,15 @@ awb #(
             S_mask_hold <= 8'd0;
             S_cnum <= 36'd0; S_cden <= 21'd0; S_crem <= 21'd0;
             S_cquo <= 36'd0; S_ccnt <= 6'd0;  S_cpass <= 1'b0;
-            // ★ 审查项 B：S_wbr / S_wbb 的唯一默认值给出点
-            S_wbr <= WB_INIT_R;
-            S_wbb <= WB_INIT_B;
+            // ★ 标定 FSM 现在只产生"请求 + 提交脉冲"，S_wbr/S_wbb 由下方
+            //   唯一所有者块写（避免与灰度世界估计器形成多驱动）
+            S_cal_req_r <= WB_INIT_R;
+            S_cal_req_b <= WB_INIT_B;
+            S_cal_commit <= 1'b0;
             O_cal_st <= 2'd0;
         end
         else begin
+            S_cal_commit <= 1'b0;
             case (S_cal_st)
                 CAL_OFF, CAL_OK, CAL_ERR: begin
                     O_cal_st <= (S_cal_st == CAL_OK)  ? 2'd2 :
@@ -896,8 +1092,9 @@ awb #(
                     S_cal_tmo   <= S_cal_tmo + 30'd1;
                     // 写请求。awb 会在它自己的新帧首像素处整对锁存，
                     // 所以这里随时写都不会造成同帧新旧混用。
-                    S_wbr       <= S_cal_gr;
-                    S_wbb       <= S_cal_gb;
+                    S_cal_req_r <= S_cal_gr;
+                    S_cal_req_b <= S_cal_gb;
+                    S_cal_commit <= 1'b1;
                     S_mask_hold <= CAL_MASK;
                     S_cal_tmo   <= 30'd0;      // 墙钟计时从 0 起，en 下一拍即有效
                     S_cal_st    <= CAL_SHDW;
@@ -913,8 +1110,9 @@ awb #(
                         // 到这一拍 S_gain_commit_en 已经是 0，awb 之后不可能
                         // 再锁存请求值，所以撤销 pending 是绝对安全的：
                         // 把请求拉回"上次真正生效"的那一对，报 ERR。
-                        S_wbr    <= S_gain_r_ap;
-                        S_wbb    <= S_gain_b_ap;
+                        S_cal_req_r <= S_gain_r_ap;
+                        S_cal_req_b <= S_gain_b_ap;
+                        S_cal_commit <= 1'b1;
                         S_cal_st <= CAL_ERR;
                     end
                     else
@@ -923,6 +1121,50 @@ awb #(
 
                 default: S_cal_st <= CAL_OFF;
             endcase
+        end
+    end
+
+    // ==================================================================
+    // 灰度世界自动白平衡（赛题改造需求 2）
+    // ------------------------------------------------------------------
+    // 统计点：黑电平校正 / demosaic / 色度降噪之后，awb 乘法器与 gamma 之前，
+    //   与下面的 AE 测光点同路同拍。
+    // G 通道按定义归一化为 1.0（绿通道做锚点），所以白平衡【不改变整体亮度】，
+    //   画面亮度完全由 AE 闭环负责 —— 这也是需求 3 把 AE 测光挪到白平衡之前
+    //   之后，两个闭环之间没有互相激励通路的原因。
+    // ==================================================================
+    isp_gray_world #(
+        .GAIN_INIT_R (WB_INIT_R),
+        .GAIN_INIT_B (WB_INIT_B)
+    ) u_gray_world (
+        .I_clk    (axi4s_video_aclk),
+        .I_rst_n  (I_rst_n),
+        .I_valid  (S_dn_v2),
+        .I_tdata  (S_dn_out),
+        .O_gain_r (S_gw_gain_r),
+        .O_gain_b (S_gw_gain_b),
+        .O_commit (S_gw_commit)
+    );
+
+    // ---- 增益唯一所有者：AWB_MODE 决定哪一路的请求生效 ----
+    always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_wbr <= WB_INIT_R;
+            S_wbb <= WB_INIT_B;
+        end
+        else if (AWB_MODE == 1'b0) begin
+            // 灰度世界（默认）：帧尾整组更新
+            if (S_gw_commit) begin
+                S_wbr <= S_gw_gain_r;
+                S_wbb <= S_gw_gain_b;
+            end
+        end
+        else begin
+            // 白纸一键标定（备用模式）
+            if (S_cal_commit) begin
+                S_wbr <= S_cal_req_r;
+                S_wbb <= S_cal_req_b;
+            end
         end
     end
 
@@ -951,23 +1193,44 @@ awb #(
 
     // ==================================================================
     // AE 测光：全帧 G 通道累加
-    //   刻意只用 G：
-    //     G 的白平衡增益按定义恒为 1.0，所以 AWB 怎么调都不影响 AE，
-    //     两个闭环之间的耦合被从结构上切断。取的是白平衡之后的 G，
-    //     和肉眼看到的亮度一致。
+    //   【赛题改造需求 3】测光点从白平衡【之后】挪到白平衡【之前】。
+    //   灰度世界会动 R/B 增益；把测光放在 AWB 之前，"AE 看到的亮度"与
+    //   "白平衡怎么调"在结构上完全无关，两个自动闭环没有任何互相激励通路。
     //
+    //   统计量与原来完全一致（全帧 G 累加），所以 AE_TARGET 的标定值不用改。
     //   量程：每拍 4 个 G 之和最大 1020，整帧 320x720 = 230400 拍，
     //         累加上限 235,008,000 < 2^28，不会溢出。
     //   取 [27:20]（右移 20）得到 0~224 的读数，满量程对应全白。
     //   注意这不是严格 0~255：921600 像素 / 2^20 = 0.879，
     //   所以 O_lum = 真实均值 x 0.879，AE 的目标值按这个单位给即可。
     // ==================================================================
+    // AWB 之前那一路（S_dn_out）的每拍 G 和
+    wire [9:0] S_pre_beat_g = S_dn_out[87:80] + S_dn_out[63:56]
+                            + S_dn_out[39:32] + S_dn_out[15:8];
+
+    // 该路的帧边界：tlast 是行尾，按计数器判帧尾（与其余模块同一套约定）
+    reg [11:0] S_mx, S_my;
+    always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_mx <= 12'd0;
+            S_my <= 12'd0;
+        end
+        else if (S_dn_v2) begin
+            if (S_mx >= 12'd1276) begin
+                S_mx <= 12'd0;
+                S_my <= (S_my >= 12'd719) ? 12'd0 : S_my + 12'd1;
+            end
+            else begin
+                S_mx <= S_mx + 12'd4;
+            end
+        end
+    end
+    wire S_pre_frm_end = S_dn_v2 && (S_mx >= 12'd1276) && (S_my >= 12'd719);
+
     reg [27:0] S_lum_acc;
-    // 帧尾那一拍本身也是数据：锁存值必须用"含当前拍"的 next 和，
-    // 否则每帧漏掉最后 4 个 G（全白画面少 4/921600，只在"仅尾拍亮"
-    // 这种极端用例下才看得出来，但语义必须是完整的）。
-    wire [27:0] S_lum_nx = S_det_vq ? (S_lum_acc + {18'd0, S_beatq_g})
-                                    : S_lum_acc;
+    // 帧尾那一拍本身也是数据：锁存值必须用"含当前拍"的 next 和
+    wire [27:0] S_lum_nx = S_dn_v2 ? (S_lum_acc + {18'd0, S_pre_beat_g})
+                                   : S_lum_acc;
 
     always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
         if (!I_rst_n) begin
@@ -975,13 +1238,13 @@ awb #(
             O_lum     <= 8'd0;
             O_lum_tgl <= 1'b0;
         end
-        else if (S_frm_evt_det) begin
+        else if (S_pre_frm_end) begin
             // 帧尾：锁存本帧均值（含尾拍），并翻转握手电平通知 24MHz 域
             O_lum     <= (S_lum_nx[27:20] > 8'd224) ? 8'd224 : S_lum_nx[27:20];
             O_lum_tgl <= ~O_lum_tgl;
             S_lum_acc <= 28'd0;
         end
-        else if (S_det_vq) begin
+        else if (S_dn_v2) begin
             S_lum_acc <= S_lum_nx;
         end
     end
@@ -1030,6 +1293,19 @@ awb #(
     //     - 宽高比 3:4 ~ 4:3：圆的透视投影仍接近 1，长条被排除
     //     - 有效行连续性 >= 90%：排除交错/断续的稀疏图案
     // ------------------------------------------------------------------
+    // ------------------------------------------------------------------
+    // 指标源选择：DET_MODE=0 用颜色无关的圆形检测，=1 用原来的红/黄颜色判据。
+    // 两条通路并行计算，这里只选谁去驱动后面的迟滞与外接框输出。
+    // ------------------------------------------------------------------
+    wire        M_evt  = DET_MODE ? S_tuser_evt  : S_shape_evt;
+    wire [11:0] M_w    = DET_MODE ? S_eval_w     : S_shape_w;
+    wire [11:0] M_h    = DET_MODE ? S_eval_h     : S_shape_h;
+    wire [23:0] M_cnt  = DET_MODE ? S_eval_cnt   : S_shape_cnt;
+    wire [11:0] M_minx = DET_MODE ? S_eval_minx  : S_shape_minx;
+    wire [11:0] M_maxx = DET_MODE ? S_eval_maxx  : S_shape_maxx;
+    wire [11:0] M_miny = DET_MODE ? S_eval_miny  : S_shape_miny;
+    wire [11:0] M_maxy = DET_MODE ? S_eval_maxy  : S_shape_maxy;
+
     wire S_ok_cnt   = (S_eval_cnt >= DET_MIN_PIX);
     wire S_ok_fill  = ((S_eval_cnt * 100) >= (S_area_r * 30));           // 噪声地板 0.30
     wire S_ok_asp   = ((S_eval_w * 4) >= (S_eval_h * 3)) &&              // w/h >= 0.75
@@ -1039,7 +1315,17 @@ awb #(
     wire S_ok_span  = ((S_eval_span * 100) >= (S_area_r * 65)) &&
                       ((S_eval_span * 100) <= (S_area_r * 90));
 
-    wire S_pass_now = S_ok_cnt && S_ok_fill && S_ok_asp && S_ok_rows && S_ok_span;
+    // DET_MODE 为常量时，这一整条旧判据（含它的 12x12 面积乘法）会被常量
+    // 折叠掉 —— 形状模式下只保留 isp_circle_detect 里那一个乘法器，
+    // 否则两个乘法器里有一个会被 TD 拆成 LUT 加法树，直接拉爆 103 MHz 时钟。
+    wire S_pass_legacy = (DET_MODE == 1'b1) &&
+                         S_ok_cnt && S_ok_fill && S_ok_asp && S_ok_rows && S_ok_span;
+
+    // 最终采用哪条通路的判定
+    wire        M_pass    = DET_MODE ? S_pass_legacy : S_shape_pass;
+    wire        M_size_ok = DET_MODE ? (S_eval_cnt >= DET_MIN_PIX) : S_shape_ok_size;
+    wire        M_cand    = DET_MODE ? (S_eval_cnt >= DET_MIN_PIX) : S_shape_cand;
+    wire        S_pass_now = M_pass;
 
     wire [5:0] S_conf_nxt = S_pass_now ? ((S_det_conf > 6'd55) ? 6'd63 : S_det_conf + 6'd8)
                                        : ((S_det_conf < 6'd8 ) ? 6'd0  : S_det_conf - 6'd8);
@@ -1079,11 +1365,11 @@ awb #(
             O_det_cnt   <= 10'd0;
         end
         else begin
-            S_pend1 <= S_tuser_evt;
+            S_pend1 <= M_evt;
             S_pend2 <= S_pend1;
 
             if (S_pend1)
-                S_area_r <= S_eval_w * S_eval_h;
+                S_area_r <= (DET_MODE == 1'b1) ? (S_eval_w * S_eval_h) : 24'd0;
 
             if (S_pend2) begin
                 S_det_conf <= S_conf_nxt;
@@ -1097,16 +1383,16 @@ awb #(
                 // 框位置在"颜色+面积通过"时就更新，不等形状校验。
                 // 否则形状不通过时框坐标根本没有更新过，橙色候选框永远画不出来
                 // ——"出框/不出框"就退化成一根没有诊断信息的 0/1 开关。
-                if (S_eval_cnt >= DET_MIN_PIX) begin
-                    S_box_minx <= S_eval_minx;
-                    S_box_maxx <= S_eval_maxx;
-                    S_box_miny <= S_eval_miny;
-                    S_box_maxy <= S_eval_maxy;
+                if (M_size_ok) begin
+                    S_box_minx <= M_minx;
+                    S_box_maxx <= M_maxx;
+                    S_box_miny <= M_miny;
+                    S_box_maxy <= M_maxy;
                 end
 
-                O_det_cand <= (S_eval_cnt >= DET_MIN_PIX);
+                O_det_cand <= M_cand;
                 // 调试显示：命中像素数 / 16（上限 999，即约 16000 像素）
-                O_det_cnt  <= (S_eval_cnt > 24'd15984) ? 10'd999 : S_eval_cnt[13:4];
+                O_det_cnt  <= (M_cnt > 24'd15984) ? 10'd999 : M_cnt[13:4];
             end
 
             O_det_minx  <= S_box_minx;
@@ -1598,7 +1884,11 @@ endmodule
 //   否则会出现"span 含尾拍、cnt/bbox 不含尾拍"的指标互相矛盾
 //   （右下角目标尤其明显：最后一拍被丢掉就少一整条边）。
 // ======================================================================
-module isp_span_acc (
+module isp_span_acc #(
+    // 每拍至少多少命中才被采纳。默认 2 = 原行为（对单拍做一次腐蚀挡孤立噪点）。
+    // 颜色无关的轮廓掩膜可能只有 1 像素宽，那种场景需要传 1。
+    parameter [2:0] MIN_HIT = 3'd2
+)(
     input  wire        I_clk,
     input  wire        I_rst_n,
     input  wire        I_valid,        // **必须是与 I_x/I_y/I_h 同级的延迟后 valid**
@@ -1618,7 +1908,7 @@ module isp_span_acc (
     output reg         O_evt           // 帧尾单拍，与上面快照同时有效
 );
     wire [2:0]  cnt_beat = {2'b00,I_h[0]} + {2'b00,I_h[1]} + {2'b00,I_h[2]} + {2'b00,I_h[3]};
-    wire        any_beat = (cnt_beat >= 3'd2);
+    wire        any_beat = (cnt_beat >= MIN_HIT);
     wire [1:0]  f_idx = I_h[0] ? 2'd0 : I_h[1] ? 2'd1 : I_h[2] ? 2'd2 : 2'd3;
     wire [1:0]  l_idx = I_h[3] ? 2'd3 : I_h[2] ? 2'd2 : I_h[1] ? 2'd1 : 2'd0;
     wire [11:0] hit_minx = I_x + {10'd0, f_idx};
