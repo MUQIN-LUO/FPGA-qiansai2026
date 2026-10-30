@@ -381,7 +381,8 @@ module isp_ccl_circle #(
             O_pass <= 1'b0; O_cand <= 1'b0;
             O_ok_size <= 1'b0; O_ok_asp <= 1'b0; O_ok_rows <= 1'b0; O_ok_chord <= 1'b0;
             O_lab <= 4'd0;
-            O_ovf <= 1'b0;
+            // O_ovf 只由标注级（下面的 always）驱动：这里不再写，避免多驱动。
+            // 语义：标注级每帧起始清零、帧内累积、帧尾保持，正好供帧尾读取。
         end
         else begin
             O_evt    <= 1'b0;
@@ -398,7 +399,7 @@ module isp_ccl_circle #(
                     O_chord <= 21'd0; O_rows <= 11'd0;
                     O_minx <= 12'd0; O_maxx <= 12'd0; O_miny <= 12'd0; O_maxy <= 12'd0;
                     O_lab <= 4'd0;
-                    O_ovf <= 1'b0;
+                    // 不在这里清 O_ovf：帧尾正是要读它的时候
                 end
             end
             else if (S_ev <= 5'd15) begin

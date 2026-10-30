@@ -734,9 +734,24 @@ awb #(
     wire        S_shape_evt, S_shape_pass, S_shape_cand;
     wire        S_shape_ok_size, S_shape_ok_asp, S_shape_ok_rows, S_shape_ok_chord;
 
-    isp_circle_detect #(
-        .MIN_W (CIRC_MIN_W),
-        .MAX_W (CIRC_MAX_W)
+    // ------------------------------------------------------------------
+    // 连通域圆形判据（替换"整帧单一累加器"的 isp_circle_detect）
+    //   旧实现整帧一个 bbox：只要有背景边缘，bbox 就等于整帧，圆被判据吞掉。
+    //   实测（上板 + 仿真）：前景掩膜命中整帧 100% 的拍，bbox=1280x720，
+    //   宽高比 1.78 直接被拒 —— 所以手持球在任何杂乱背景里都不可能出框。
+    //   isp_ccl_circle 逐行游程 + 15 标签并查集，只在**同一个连通域内部**
+    //   统计弦长，于是背景边缘不会再污染外接框和弦长比。
+    //   接口与原模块一致（O_span -> O_chord，单位由像素变格），因此是等价替换。
+    // ------------------------------------------------------------------
+    wire [3:0] S_shape_lab;
+    wire       S_shape_ovf;
+
+    isp_ccl_circle #(
+        .IMG_WIDTH (1280),
+        .IMG_HEIGHT(720 ),
+        .MIN_W_PX  (CIRC_MIN_W),
+        .MAX_W_PX  (CIRC_MAX_W),
+        .MIN_CELLS (CIRC_MIN_W[11:2])
     ) u_circle_detect (
         .I_clk    (axi4s_video_aclk),
         .I_rst_n  (I_rst_n),
@@ -749,7 +764,7 @@ awb #(
         .O_w      (S_shape_w),
         .O_h      (S_shape_h),
         .O_cnt    (S_shape_cnt),
-        .O_span   (S_shape_span),
+        .O_chord  (S_shape_span),
         .O_rows   (S_shape_rows),
         .O_minx   (S_shape_minx),
         .O_maxx   (S_shape_maxx),
@@ -760,7 +775,9 @@ awb #(
         .O_ok_size(S_shape_ok_size),
         .O_ok_asp (S_shape_ok_asp),
         .O_ok_rows(S_shape_ok_rows),
-        .O_ok_chord(S_shape_ok_chord)
+        .O_ok_chord(S_shape_ok_chord),
+        .O_lab    (S_shape_lab),
+        .O_ovf    (S_shape_ovf)
     );
 
     // 红球（颜色判据）通路：DET_MODE=1 时才送到画面上。
