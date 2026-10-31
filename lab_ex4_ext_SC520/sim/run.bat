@@ -48,6 +48,10 @@ vlog -quiet %U%\uicfgcs520.v %R%\uics500_cfg\uii2c.v %U%\uics520reg_720p60.v ^
     %U%\SC520GainTbl.v %U%\uics520regAE.v tb\tb_ae_i2c.v
 vsim -c -quiet tb_ae_i2c -do "run -all; quit -f" -l logs\tb_ae_i2c.log
 
+echo === tb_det_result (pass -> candidate -> empty / target switch) ===
+vlog -quiet %I%\isp_top.v tb\tb_det_result.v
+vsim -c -quiet tb_det_result -do "run -all; quit -f" -l logs\tb_det_result.log
+
 echo === tb_det_frontend_awb (early tuser / circle / FIFO recovery) ===
 vlog -quiet %R%\awb.v %I%\awb\divider\divider_gate.v %I%\awb\signal_delay.v ^
     tb\blk_mem_gen_awb_delay_signal.v %I%\edge_detect_96.v %I%\isp_shape_circle.v ^

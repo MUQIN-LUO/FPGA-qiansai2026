@@ -1,3 +1,152 @@
+// ==========================================================================
+// 检测结果迟滞/外接框（真实 RTL，isp_top 与 tb_det_result 共用）
+// --------------------------------------------------------------------------
+// 背景：
+//   旧实现让 O_det_valid（跨帧置信度迟滞）与 S_box（每帧 M_size_ok 更新）
+//   共用一组 bbox。一旦本帧出现"尺寸通过但形状未过"的候选，bbox 会被候选
+//   位置覆盖，而绿色 valid 仍来自上一帧的通过状态 —— 画面上就是绿色框
+//   套在候选/杂物上（复杂背景误检）。
+//
+// 本模块：
+//   · 分别保存 bbox_pass（最后一次 pass）与 bbox_cand（最后一次 size_ok）；
+//   · 绿色 valid 期间输出 bbox_pass；非 valid 时输出 bbox_cand（橙色候选）；
+//   · 置信度 +/-8、>=24 点亮、<8 熄灭，保持原有时序；
+//   · 额外输出 pass/size_ok/cand/evt/conf 供 HUD 诊断。
+// ==========================================================================
+module isp_det_result #(
+    parameter [5:0] CONF_INC  = 6'd8,
+    parameter [5:0] CONF_DEC  = 6'd8,
+    parameter [5:0] STICK_ON  = 6'd24,
+    parameter [5:0] STICK_OFF = 6'd8
+)(
+    input  wire        I_clk,
+    input  wire        I_rst_n,
+    input  wire        I_clr,
+    input  wire        I_evt,          // 帧尾评估脉冲（M_evt）
+    input  wire        I_frame,        // 帧起始脉冲：用于发现"坏帧丢事件"
+    input  wire        I_pass,         // 形状通过
+    input  wire        I_size_ok,      // 尺寸通过（候选框更新）
+    input  wire        I_cand,         // 候选（形状未过）
+    input  wire [5:0]  I_crit,         // {ovf,live,chord,rows,asp,size}
+    input  wire [9:0]  I_cnt,          // 命中像素数/16
+    input  wire [11:0] I_minx, I_maxx, I_miny, I_maxy,
+    output reg         O_valid,
+    output reg         O_cand,
+    output reg  [11:0] O_minx, O_maxx, O_miny, O_maxy,
+    output reg  [5:0]  O_conf,
+    output reg  [7:0]  O_flags,        // {ovf,live,chord,rows,asp,size,pass,valid}
+    output reg  [9:0]  O_cnt,
+    output reg         O_pass, O_size_ok, O_cand_d, O_evt
+);
+    reg        S_p1, S_p2;
+    reg [5:0]  S_conf;
+    reg        S_sticky;
+    reg        S_evt_seen;    // 自上一帧起始以来收到过评估事件
+    // 最后通过的 bbox（绿色 valid 使用）
+    reg [11:0] S_p_minx, S_p_maxx, S_p_miny, S_p_maxy;
+    // 最后一次尺寸通过的 bbox（橙色候选使用）
+    reg [11:0] S_c_minx, S_c_maxx, S_c_miny, S_c_maxy;
+
+    wire [5:0] S_conf_nxt = I_pass
+        ? ((S_conf > 6'd55) ? 6'd63 : (S_conf + CONF_INC))
+        : ((S_conf < CONF_DEC) ? 6'd0 : (S_conf - CONF_DEC));
+    // 坏帧/丢事件时的衰减：没有新评估就按"miss"处理，避免旧绿框无限保留
+    wire [5:0] S_conf_miss = (S_conf < CONF_DEC) ? 6'd0 : (S_conf - CONF_DEC);
+    wire       S_sticky_nxt = (!S_sticky && (S_conf_nxt >= STICK_ON)) ? 1'b1 :
+                              (S_sticky  && (S_conf_nxt <  STICK_OFF)) ? 1'b0 : S_sticky;
+    wire       S_sticky_miss = (S_sticky && (S_conf_miss < STICK_OFF)) ? 1'b0 : S_sticky;
+    reg        S_frm_d;
+    wire       S_frm_p = I_frame && !S_frm_d;
+
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_p1 <= 1'b0; S_p2 <= 1'b0;
+            S_conf <= 6'd0; S_sticky <= 1'b0;
+            S_evt_seen <= 1'b0; S_frm_d <= 1'b0;
+            S_p_minx <= 12'd0; S_p_maxx <= 12'd0;
+            S_p_miny <= 12'd0; S_p_maxy <= 12'd0;
+            S_c_minx <= 12'd0; S_c_maxx <= 12'd0;
+            S_c_miny <= 12'd0; S_c_maxy <= 12'd0;
+            O_valid <= 1'b0; O_cand <= 1'b0;
+            O_minx <= 12'd0; O_maxx <= 12'd0;
+            O_miny <= 12'd0; O_maxy <= 12'd0;
+            O_conf <= 6'd0; O_flags <= 8'd0; O_cnt <= 10'd0;
+            O_pass <= 1'b0; O_size_ok <= 1'b0; O_cand_d <= 1'b0; O_evt <= 1'b0;
+        end
+        else if (I_clr) begin
+            S_p1 <= 1'b0; S_p2 <= 1'b0;
+            S_conf <= 6'd0; S_sticky <= 1'b0;
+            S_evt_seen <= 1'b0; S_frm_d <= 1'b0;
+            S_p_minx <= 12'd0; S_p_maxx <= 12'd0;
+            S_p_miny <= 12'd0; S_p_maxy <= 12'd0;
+            S_c_minx <= 12'd0; S_c_maxx <= 12'd0;
+            S_c_miny <= 12'd0; S_c_maxy <= 12'd0;
+            O_valid <= 1'b0; O_cand <= 1'b0;
+            O_minx <= 12'd0; O_maxx <= 12'd0;
+            O_miny <= 12'd0; O_maxy <= 12'd0;
+            O_conf <= 6'd0; O_flags <= 8'd0; O_cnt <= 10'd0;
+            O_pass <= 1'b0; O_size_ok <= 1'b0; O_cand_d <= 1'b0; O_evt <= 1'b0;
+        end
+        else begin
+            S_p1 <= I_evt;
+            S_p2 <= S_p1;
+            O_evt <= S_p2;
+            S_frm_d <= I_frame;
+
+            if (S_p2) begin
+                S_evt_seen <= 1'b1;
+                S_conf <= S_conf_nxt;
+                S_sticky <= S_sticky_nxt;
+
+                if (I_pass) begin
+                    S_p_minx <= I_minx; S_p_maxx <= I_maxx;
+                    S_p_miny <= I_miny; S_p_maxy <= I_maxy;
+                end
+                if (I_size_ok) begin
+                    S_c_minx <= I_minx; S_c_maxx <= I_maxx;
+                    S_c_miny <= I_miny; S_c_maxy <= I_maxy;
+                end
+
+                O_cand   <= I_cand;
+                O_pass   <= I_pass;
+                O_size_ok<= I_size_ok;
+                O_cand_d <= I_cand;
+                // 与 bbox/状态同一拍锁存，保证显示组原子一致
+                O_cnt    <= I_cnt;
+                O_flags  <= {I_crit, I_pass, S_sticky_nxt};
+            end
+            else if (S_frm_p) begin
+                // 整帧没有评估事件（坏帧/丢拍）：按 miss 衰减，避免旧绿框永久保留。
+                // 同时清掉本帧的 pass/cand 诊断位，不声称有任何新的评估结论。
+                if (!S_evt_seen) begin
+                    S_conf   <= S_conf_miss;
+                    S_sticky <= S_sticky_miss;
+                    O_pass   <= 1'b0;
+                    O_cand   <= 1'b0;
+                    O_size_ok<= 1'b0;
+                    O_cand_d <= 1'b0;
+                    O_cnt    <= 10'd0;
+                    O_flags  <= {6'd0, 1'b0, S_sticky_miss};
+                end
+                S_evt_seen <= 1'b0;
+            end
+
+            // ★ 绿色状态只使用"最后通过"的 bbox；候选不得覆盖它。
+            if (S_sticky) begin
+                O_minx <= S_p_minx; O_maxx <= S_p_maxx;
+                O_miny <= S_p_miny; O_maxy <= S_p_maxy;
+            end
+            else begin
+                O_minx <= S_c_minx; O_maxx <= S_c_maxx;
+                O_miny <= S_c_miny; O_maxy <= S_c_maxy;
+            end
+            O_valid <= S_sticky;
+            O_conf  <= S_conf;
+        end
+    end
+endmodule
+
+
 module isp_top #(
     // 标定墙钟超时（CSI 时钟拍数）。默认 5e8 ≈ 4.8 s @103.5 MHz，
     // 与原来完全一致；做成 parameter 只是为了仿真能缩短，综合默认值不变。
@@ -37,13 +186,14 @@ module isp_top #(
     input [9:0] 	I_tdest			,
     input [1:0] 	I_mode			,   // 0=原图 1=边缘 2=灰度 3=波普
     input [1:0] 	I_pal			,   // 波普调色板编号
-    output reg [11:0] O_det_minx	,   // 黄色目标外接框（图像坐标）
-    output reg [11:0] O_det_maxx	,
-    output reg [11:0] O_det_miny	,
-    output reg [11:0] O_det_maxy	,
-    output reg        O_det_valid	,   // 颜色+面积+形状 全部通过
-    output reg        O_det_cand	,   // 颜色+面积通过（形状未过，供调参观察）
-    output reg [9:0]  O_det_cnt		,   // 命中像素数 / 16（调试显示用）
+    output wire [11:0] O_det_minx	,   // 圆形目标外接框（图像坐标）
+    output wire [11:0] O_det_maxx	,
+    output wire [11:0] O_det_miny	,
+    output wire [11:0] O_det_maxy	,
+    output wire        O_det_valid	,   // 尺寸+形状 全部通过（迟滞点亮的绿色状态）
+    output wire        O_det_cand	,   // 本帧尺寸通过、形状未过（橙色候选）
+    output wire [9:0]  O_det_cnt		,   // 命中像素数 / 16（调试显示用）
+    output wire [7:0]  O_det_flags	,   // 圆形诊断 {ovf,live,chord,rows,asp,size,pass,valid}
     output reg [7:0]  O_rgb_r		,   // 中心 64x64 区域平均色（白平衡标定 / 验证用）
     output reg [7:0]  O_rgb_g		,
     output reg [7:0]  O_rgb_b		,
@@ -717,6 +867,7 @@ awb #(
     wire [11:0] S_shape_w, S_shape_h;
     wire [11:0] S_shape_minx, S_shape_maxx, S_shape_miny, S_shape_maxy;
     wire        S_shape_evt, S_shape_pass, S_shape_cand;
+    wire        S_shape_live;
     wire        S_shape_ok_size, S_shape_ok_asp, S_shape_ok_rows, S_shape_ok_chord;
     wire [3:0]  S_shape_lab;
     wire        S_shape_ovf;
@@ -749,6 +900,7 @@ awb #(
         .O_maxy     (S_shape_maxy),
         .O_pass     (S_shape_pass),
         .O_cand     (S_shape_cand),
+        .O_live     (S_shape_live),
         .O_ok_size  (S_shape_ok_size),
         .O_ok_asp   (S_shape_ok_asp),
         .O_ok_rows  (S_shape_ok_rows),
@@ -1279,10 +1431,6 @@ awb #(
     //     每帧检出 +8，未检出 -8（0~63 饱和）
     //     置信度 >= 24（约连续 3 帧）才点亮，< 8（约连续 3 帧丢失）才熄灭
     //   熄灭前的保持期里框停在最后一次检出的位置，不会乱跳。
-    reg [5:0]  S_det_conf;
-    reg        S_det_sticky;
-    reg [11:0] S_box_minx, S_box_maxx, S_box_miny, S_box_maxy;
-
     // ------------------------------------------------------------------
     // 形状判据（颜色 + 形状，尺度稳定）
     //   主判据是【逐行外轮廓跨度累计 / 外接框面积】：
@@ -1333,81 +1481,67 @@ awb #(
     wire        M_cand    = DET_MODE ? (S_eval_cnt >= DET_MIN_PIX) : S_shape_cand;
     wire        S_pass_now = M_pass;
 
-    wire [5:0] S_conf_nxt = S_pass_now ? ((S_det_conf > 6'd55) ? 6'd63 : S_det_conf + 6'd8)
-                                       : ((S_det_conf < 6'd8 ) ? 6'd0  : S_det_conf - 6'd8);
-
+    // 旧判据（DET_MODE=1）的面积锁存，供 S_ok_fill/S_ok_span 使用。
+    //   DET_MODE=0 时被常量折叠；保留原有 1 拍滞后。
+    reg S_area_p1;
     always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
         if (!I_rst_n) begin
-            S_pend1     <= 1'b0;
-            S_pend2     <= 1'b0;
-            S_area_r    <= 24'd0;
-            S_det_conf  <= 6'd0;
-            S_det_sticky<= 1'b0;
-            S_box_minx  <= 12'd0;  S_box_maxx <= 12'd0;
-            S_box_miny  <= 12'd0;  S_box_maxy <= 12'd0;
-            O_det_minx  <= 12'd0;  O_det_maxx <= 12'd0;
-            O_det_miny  <= 12'd0;  O_det_maxy <= 12'd0;
-            O_det_valid <= 1'b0;
-            O_det_cand  <= 1'b0;
-            O_det_cnt   <= 10'd0;
+            S_area_p1 <= 1'b0;
+            S_area_r  <= 24'd0;
         end
         else if (S_det_mask) begin
-            // ★ 标定 BUSY / 冷却期：识别结果整组清零。
-            //   屏蔽时 u_span_acc 被 I_clr 清空、不再产生 S_tuser_evt，
-            //   下面那条评估流水整段不动 —— 如果不清，旧外接框会一直挂在
-            //   画面上，看起来像"标定期间还在识别"。退出屏蔽后从完整帧
-            //   重新积置信度（S_det_conf 已归零，需要连续 3 帧才重新点亮）。
-            S_pend1     <= 1'b0;
-            S_pend2     <= 1'b0;
-            S_area_r    <= 24'd0;
-            S_det_conf  <= 6'd0;
-            S_det_sticky<= 1'b0;
-            S_box_minx  <= 12'd0;  S_box_maxx <= 12'd0;
-            S_box_miny  <= 12'd0;  S_box_maxy <= 12'd0;
-            O_det_minx  <= 12'd0;  O_det_maxx <= 12'd0;
-            O_det_miny  <= 12'd0;  O_det_maxy <= 12'd0;
-            O_det_valid <= 1'b0;
-            O_det_cand  <= 1'b0;
-            O_det_cnt   <= 10'd0;
+            S_area_p1 <= 1'b0;
+            S_area_r  <= 24'd0;
         end
         else begin
-            S_pend1 <= M_evt;
-            S_pend2 <= S_pend1;
-
-            if (S_pend1)
+            S_area_p1 <= M_evt;
+            if (S_area_p1)
                 S_area_r <= (DET_MODE == 1'b1) ? (S_eval_w * S_eval_h) : 24'd0;
-
-            if (S_pend2) begin
-                S_det_conf <= S_conf_nxt;
-
-                // 迟滞：累积到 24 才点亮，跌破 8 才熄灭
-                if (!S_det_sticky && (S_conf_nxt >= 6'd24))
-                    S_det_sticky <= 1'b1;
-                else if (S_det_sticky && (S_conf_nxt < 6'd8))
-                    S_det_sticky <= 1'b0;
-
-                // 框位置在"颜色+面积通过"时就更新，不等形状校验。
-                // 否则形状不通过时框坐标根本没有更新过，橙色候选框永远画不出来
-                // ——"出框/不出框"就退化成一根没有诊断信息的 0/1 开关。
-                if (M_size_ok) begin
-                    S_box_minx <= M_minx;
-                    S_box_maxx <= M_maxx;
-                    S_box_miny <= M_miny;
-                    S_box_maxy <= M_maxy;
-                end
-
-                O_det_cand <= M_cand;
-                // 调试显示：命中像素数 / 16（上限 999，即约 16000 像素）
-                O_det_cnt  <= (M_cnt > 24'd15984) ? 10'd999 : M_cnt[13:4];
-            end
-
-            O_det_minx  <= S_box_minx;
-            O_det_maxx  <= S_box_maxx;
-            O_det_miny  <= S_box_miny;
-            O_det_maxy  <= S_box_maxy;
-            O_det_valid <= S_det_sticky;
         end
     end
+
+    // 迟滞/外接框（真实 RTL，tb_det_result 直接验证）：
+    //   绿色 valid 只使用"最后一次通过"的 bbox；候选 bbox 不得覆盖它。
+    //   这修复了真实板测中"上一帧通过的绿色状态套在本帧候选框上"的误检。
+    wire        S_det_evt_w;
+    wire [5:0]  S_det_conf_w;
+    wire        S_det_pass_w, S_det_size_w, S_det_cand_d_w;
+    // 命中像素数/16（上限 999，即约 16000 像素），与 bbox/flags 同拍锁存
+    wire [9:0]  S_det_cnt_w = (M_cnt > 24'd15984) ? 10'd999 : M_cnt[13:4];
+    // 判据组：{ovf,live,chord,rows,asp,size}
+    wire [5:0]  S_det_crit_w = { S_shape_ovf, S_shape_live,
+                                 S_shape_ok_chord, S_shape_ok_rows,
+                                 S_shape_ok_asp, S_shape_ok_size };
+    isp_det_result u_det_result (
+        .I_clk    (axi4s_video_aclk),
+        .I_rst_n  (I_rst_n),
+        .I_clr    (S_det_mask),
+        .I_evt    (M_evt),
+        .I_frame  (I_tuser),
+        .I_pass   (M_pass),
+        .I_size_ok(M_size_ok),
+        .I_cand   (M_cand),
+        .I_crit   (S_det_crit_w),
+        .I_cnt    (S_det_cnt_w),
+        .I_minx   (M_minx), .I_maxx(M_maxx),
+        .I_miny   (M_miny), .I_maxy(M_maxy),
+        .O_valid  (O_det_valid),
+        .O_cand   (O_det_cand),
+        .O_minx   (O_det_minx), .O_maxx(O_det_maxx),
+        .O_miny   (O_det_miny), .O_maxy(O_det_maxy),
+        .O_conf   (S_det_conf_w),
+        .O_flags  (O_det_flags),
+        .O_cnt    (O_det_cnt),
+        .O_pass   (S_det_pass_w),
+        .O_size_ok(S_det_size_w),
+        .O_cand_d (S_det_cand_d_w),
+        .O_evt    (S_det_evt_w)
+    );
+
+    // 圆形诊断（板测 HUD）：
+    //   flags = {ovf,live,chord,rows,asp,size,pass,valid}
+    //   判据位只在 pass=1 或 cand=1 时有效；两者都为 0 时只表示
+    //   "有/无连通域(live)、是否标签溢出(ovf)"，不能据此声称具体失败原因。
 
     reg [95:0] raw_d1, raw_d2, gray_d1, gray_d2, pop_d1, pop_d2;
     reg        raw_v1, raw_v2, raw_u1, raw_u2, raw_l1, raw_l2;

@@ -73,6 +73,7 @@ module isp_ccl_circle #(
     output reg  [11:0] O_maxy,
     output reg         O_pass,
     output reg         O_cand,
+    output reg         O_live,      // 本帧存在至少一个有效连通域（诊断用）
     output reg         O_ok_size,
     output reg         O_ok_asp,
     output reg         O_ok_rows,
@@ -113,6 +114,7 @@ module isp_ccl_circle #(
     reg        run_col_v;
 
     reg        S_ev_fin;
+    reg        S_live_any;   // 帧内至少出现过一个 live 标签
     reg        S_rowpend;   // 行尾结算推迟一拍（行尾同时有关闭时）
 
     integer i, k;
@@ -169,6 +171,33 @@ module isp_ccl_circle #(
     reg  [14:0] S_prev_col;      // 上一个"整格命中"的颜色
     reg         S_prev_v;
     wire        cell_full = (&I_hit);
+    // 镜面高光：整格、三通道都亮、通道间色差很小（接近白）。
+    // 高光是同一物体表面的反光，不是另一个物体；若按颜色跳变切断游程，
+    // 球会被切成上/下/左/右多块（实测 204x96、176x53 等块宽高比失败，
+    // 而 72x65 的高光本身反而满足圆形判据）。因此高光格：
+    //   · 不触发 col_split（继续留在当前游程里）；
+    //   · 不更新 run_col（避免把代表色拉向白色）；
+    //   · 不更新 S_prev_col（下一格仍以物体色为局部参考）。
+    localparam [4:0] SPEC_MIN    = 5'd24;   // 120/255：明显亮于普通物体
+    localparam [4:0] SPEC_CHROMA = 5'd6;    // max-min <= 6（5bit）
+    wire [4:0] cell_r = I_rgb[14:10];
+    wire [4:0] cell_g = I_rgb[9:5];
+    wire [4:0] cell_b = I_rgb[4:0];
+    wire [4:0] cell_hi = (cell_r >= cell_g && cell_r >= cell_b) ? cell_r :
+                         (cell_g >= cell_b) ? cell_g : cell_b;
+    wire [4:0] cell_lo = (cell_r <= cell_g && cell_r <= cell_b) ? cell_r :
+                         (cell_g <= cell_b) ? cell_g : cell_b;
+    wire       specular = COLOR_AWARE && cell_full &&
+                          (cell_lo >= SPEC_MIN) && ((cell_hi - cell_lo) <= SPEC_CHROMA);
+
+    // 增亮低饱和的宽判据（曾用于覆盖高光过渡环）会把手部肤色也当成高光：
+    // 实测红球+手指被并成 440x190。肤色与"增亮红"在 5:5:5 上不可靠区分，
+    // 因此不采用该规则。这里只保留严格镜面白核：
+    //   整格、三通道都 >= SPEC_MIN、通道间色差 <= SPEC_CHROMA。
+    // 高光过渡环改为在测试模型里平滑衰减（每格色差 < COLOR_TH），
+    // 真实场景若出现"非白的高对比反光边"，仍可能切碎目标——已记录为边界。
+    wire       no_split = specular;
+
     // 颜色跳变判据（双条件，跨过单个混合格）：
     //   · 与"当前游程代表色"差 >= COLOR_TH：累计色差已经明显；
     //   · 与"上一整格"差 >= COLOR_TH/2：变化是突变的，不是光照渐变。
@@ -176,7 +205,7 @@ module isp_ccl_circle #(
     // 红球+肤手会被桥接成一个域（实测）。只用累计判据又会把球面渐变切成多片。
     localparam [6:0] COLOR_LOCAL = (COLOR_TH >> 1);
     wire        col_split = COLOR_AWARE && in_run && cell_full && run_col_v &&
-                            (I_x != 12'd0) &&
+                            (I_x != 12'd0) && !no_split &&
                             (cdist5(I_rgb, run_col) >= COLOR_TH) &&
                             (!S_prev_v || (cdist5(I_rgb, S_prev_col) >= COLOR_LOCAL));
 
@@ -189,7 +218,7 @@ module isp_ccl_circle #(
             S_prev_col <= 15'd0;
             S_prev_v   <= 1'b0;
         end
-        else if (I_valid && cell_full) begin
+        else if (I_valid && cell_full && !no_split) begin
             // 跳变格本身也更新参考色：下一格与它同色时不再判跳变
             S_prev_col <= I_rgb;
             S_prev_v   <= 1'b1;
@@ -468,7 +497,8 @@ module isp_ccl_circle #(
                         run_l  <= ov1_cur;
                         run_l2 <= ov2_cur;
                         run_col   <= I_rgb;
-                        run_col_v <= cell_full;
+                        // 高光起头的游程没有"物体色"可记：等第一个非高光整格再定色
+                        run_col_v <= cell_full && !specular;
                     end
                     else begin
                         // 代表色：首个整格先取源色，之后按 1/4 EMA 跟随本游程。
@@ -476,7 +506,9 @@ module isp_ccl_circle #(
                         // 手的代表色（与红球距离可能 < 阈值），使小手被并进红球；
                         // 长游程 EMA 会收敛到纯肤色。颜色跳变判据仍用更新前的
                         // run_col，因此不会削弱边界检测。
-                        if (cell_full) begin
+                        // 高光/增亮低饱和格不更新代表色（no_split），避免把球的
+                        // 代表色拉向白色后拒绝另一侧同色游程。
+                        if (cell_full && !no_split) begin
                             if (!run_col_v) begin
                                 run_col   <= I_rgb;
                                 run_col_v <= 1'b1;
@@ -637,6 +669,7 @@ module isp_ccl_circle #(
             O_w <= 12'd0; O_h <= 12'd0; O_cnt <= 24'd0; O_chord <= 21'd0; O_rows <= 11'd0;
             O_minx <= 12'd0; O_maxx <= 12'd0; O_miny <= 12'd0; O_maxy <= 12'd0;
             O_pass <= 1'b0; O_cand <= 1'b0;
+            O_live <= 1'b0; S_live_any <= 1'b0;
             O_ok_size <= 1'b0; O_ok_asp <= 1'b0; O_ok_rows <= 1'b0; O_ok_chord <= 1'b0;
             O_lab <= 4'd0;
             M1_live <= 1'b0; M1_lab <= 4'd0; M1_wc <= 9'd0; M1_h <= 10'd0;
@@ -656,6 +689,8 @@ module isp_ccl_circle #(
                     S_ev      <= 5'd2;      // 留 1 拍给 B 段写回
                     O_pass    <= 1'b0;
                     O_cand    <= 1'b0;
+                    O_live    <= 1'b0;
+                    S_live_any <= 1'b0;
                     O_ok_size <= 1'b0; O_ok_asp <= 1'b0;
                     O_ok_rows <= 1'b0; O_ok_chord <= 1'b0;
                     O_w <= 12'd0; O_h <= 12'd0; O_cnt <= 24'd0;
@@ -718,6 +753,7 @@ module isp_ccl_circle #(
 
                 // 第 1 级：锁存指标（S_ev=3..17）
                 if (e_sel) begin
+                    if (e_live) S_live_any <= 1'b1;
                     M1_live  <= e_live;
                     M1_lab   <= e_i;
                     M1_wc    <= e_wc;
@@ -735,6 +771,7 @@ module isp_ccl_circle #(
             end
             else begin
                 O_evt    <= 1'b1;
+                O_live   <= S_live_any;
                 S_ev_fin <= 1'b1;
                 S_ev     <= 5'd0;
             end

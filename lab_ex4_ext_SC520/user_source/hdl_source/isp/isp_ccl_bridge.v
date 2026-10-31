@@ -47,6 +47,7 @@ module isp_ccl_bridge #(
     output reg  [11:0] O_maxy,
     output reg         O_pass,
     output reg         O_cand,
+    output reg         O_live,      // 本帧存在有效连通域（与 O_evt 同组）
     output reg         O_ok_size,
     output reg         O_ok_asp,
     output reg         O_ok_rows,
@@ -184,7 +185,7 @@ module isp_ccl_bridge #(
     wire S_ccl_clr = ccl_clr_sync[1];
 
     // ---------------- CCL ----------------
-    wire        C_evt, C_pass, C_cand, C_ok_size, C_ok_asp, C_ok_rows, C_ok_chord, C_ovf;
+    wire        C_evt, C_pass, C_cand, C_live, C_ok_size, C_ok_asp, C_ok_rows, C_ok_chord, C_ovf;
     wire [11:0] C_w, C_h, C_minx, C_maxx, C_miny, C_maxy;
     wire [23:0] C_cnt;
     wire [20:0] C_chord;
@@ -218,6 +219,7 @@ module isp_ccl_bridge #(
         .O_maxy   (C_maxy),
         .O_pass   (C_pass),
         .O_cand   (C_cand),
+        .O_live   (C_live),
         .O_ok_size(C_ok_size),
         .O_ok_asp (C_ok_asp),
         .O_ok_rows(C_ok_rows),
@@ -252,14 +254,17 @@ module isp_ccl_bridge #(
     // ---------------- 事件 CDC：3FF + 边沿 ----------------
     reg C_evt_tgl;
     reg C_ovf_hold;
+    reg C_live_hold;
     always @(posedge I_ccl_clk or negedge ccl_rst_n) begin
         if (!ccl_rst_n) begin
             C_evt_tgl  <= 1'b0;
             C_ovf_hold <= 1'b0;
+            C_live_hold<= 1'b0;
         end
         else if (C_evt && S_frame_open) begin
             C_evt_tgl  <= ~C_evt_tgl;
             C_ovf_hold <= C_ovf;
+            C_live_hold<= C_live;
         end
     end
 
@@ -275,7 +280,7 @@ module isp_ccl_bridge #(
             O_evt <= 1'b0;
             O_w <= 12'd0; O_h <= 12'd0; O_cnt <= 24'd0; O_chord <= 21'd0; O_rows <= 11'd0;
             O_minx <= 12'd0; O_maxx <= 12'd0; O_miny <= 12'd0; O_maxy <= 12'd0;
-            O_pass <= 1'b0; O_cand <= 1'b0;
+            O_pass <= 1'b0; O_cand <= 1'b0; O_live <= 1'b0;
             O_ok_size <= 1'b0; O_ok_asp <= 1'b0; O_ok_rows <= 1'b0; O_ok_chord <= 1'b0;
             O_lab <= 4'd0; O_ovf <= 1'b0;
         end
@@ -284,7 +289,7 @@ module isp_ccl_bridge #(
             if (S_evt_pulse) begin
                 O_w <= C_w; O_h <= C_h; O_cnt <= C_cnt; O_chord <= C_chord; O_rows <= C_rows;
                 O_minx <= C_minx; O_maxx <= C_maxx; O_miny <= C_miny; O_maxy <= C_maxy;
-                O_pass <= C_pass; O_cand <= C_cand;
+                O_pass <= C_pass; O_cand <= C_cand; O_live <= C_live_hold;
                 O_ok_size <= C_ok_size; O_ok_asp <= C_ok_asp;
                 O_ok_rows <= C_ok_rows; O_ok_chord <= C_ok_chord;
                 O_lab <= C_lab; O_ovf <= C_ovf_hold;

@@ -154,6 +154,7 @@ module design_top_wrapper (
     wire [11:0] S_det_minx, S_det_maxx, S_det_miny, S_det_maxy;
     wire        S_det_valid, S_det_cand;
     wire [9:0]  S_det_cnt;
+    wire [7:0]  S_det_flags;   // 圆形诊断 {ovf,live,chord,rows,asp,size,pass,valid}
     // Red ball has its own result and handshake; yellow CDC remains unchanged.
     wire [11:0] S_red_minx, S_red_maxx, S_red_miny, S_red_maxy;
     wire S_red_valid, S_red_cand, S_red_update;
@@ -177,6 +178,7 @@ module design_top_wrapper (
     reg  [11:0] S_stg_minx, S_stg_maxx, S_stg_miny, S_stg_maxy;
     reg         S_stg_valid, S_stg_cand;
     reg  [ 9:0] S_stg_cnt;
+    reg  [ 7:0] S_stg_flags;   // 圆形诊断位，与 bbox/valid/cand 同一快照组
     reg  [ 1:0] S_stg_cal;
     reg  [ 9:0] S_stg_gr, S_stg_gb;
     reg  [ 7:0] S_stg_ar, S_stg_ag, S_stg_ab;
@@ -189,6 +191,7 @@ module design_top_wrapper (
     reg  [11:0] S_sn_minx, S_sn_maxx, S_sn_miny, S_sn_maxy;
     reg         S_sn_valid, S_sn_cand;
     reg  [9:0]  S_sn_cnt;
+    reg  [7:0]  S_sn_flags;
     reg  [1:0]  S_sn_cal;
     reg         S_sn_tgl;
     reg         S_ft1, S_ft2, S_ft3;
@@ -197,6 +200,7 @@ module design_top_wrapper (
     reg  [11:0] S_rc_minx, S_rc_maxx, S_rc_miny, S_rc_maxy;
     reg         S_rc_valid, S_rc_cand;
     reg  [9:0]  S_rc_cnt;
+    reg  [7:0]  S_rc_flags;
     reg  [1:0]  S_rc_cal;
     reg         S_st1, S_st2, S_st3;
     wire        S_snap_evt = S_st2 ^ S_st3;
@@ -205,6 +209,7 @@ module design_top_wrapper (
     reg  [11:0] S_det_minx_p, S_det_maxx_p, S_det_miny_p, S_det_maxy_p;
     reg         S_det_valid_p, S_det_cand_p;
     reg  [9:0]  S_det_cnt_p;
+    reg  [7:0]  S_det_flags_p;
 
     // 中心区域平均色（调试）
     wire [7:0]  S_avg_r, S_avg_g, S_avg_b;
@@ -642,11 +647,13 @@ module design_top_wrapper (
             S_det_valid_p <= 1'b0;
             S_det_cand_p  <= 1'b0;
             S_det_cnt_p   <= 10'd0;
+            S_det_flags_p <= 8'd0;
             S_cal_st_p    <= 2'd0;
             S_rc_minx <= 12'd0; S_rc_maxx <= 12'd0;
             S_rc_miny <= 12'd0; S_rc_maxy <= 12'd0;
             S_rc_valid<= 1'b0;  S_rc_cand <= 1'b0;
             S_rc_cnt <= 10'd0;  S_rc_cal  <= 2'd0;
+            S_rc_flags <= 8'd0;
             S_st1 <= 1'b0; S_st2 <= 1'b0; S_st3 <= 1'b0;
             S_ack_tgl <= 1'b0;
             S_rc_gr <= 10'd0; S_rc_gb <= 10'd0;
@@ -679,6 +686,7 @@ module design_top_wrapper (
                 S_rc_valid <= S_sn_valid;
                 S_rc_cand  <= S_sn_cand;
                 S_rc_cnt   <= S_sn_cnt;
+                S_rc_flags <= S_sn_flags;
                 S_rc_cal   <= S_sn_cal;
                 S_rc_gr    <= S_sn_gr;
                 S_rc_gb    <= S_sn_gb;
@@ -702,6 +710,7 @@ module design_top_wrapper (
                 S_det_valid_p <= S_rc_valid;
                 S_det_cand_p  <= S_rc_cand;
                 S_det_cnt_p   <= S_rc_cnt;
+                S_det_flags_p <= S_rc_flags;    // 与 bbox/valid/cand 同一快照组
                 S_cal_st_p    <= S_rc_cal;
                 // AE 状态来自 CSI 域中继，显示帧边界整组锁存
                 S_ae_pix      <= S_ae_csi;
@@ -752,6 +761,7 @@ module design_top_wrapper (
             S_sn_miny <= 12'd0; S_sn_maxy <= 12'd0;
             S_sn_valid <= 1'b0; S_sn_cand <= 1'b0;
             S_sn_cnt <= 10'd0;  S_sn_cal <= 2'd0;  S_sn_tgl <= 1'b0;
+            S_sn_flags <= 8'd0;
             S_cal_st_l <= 2'd0;
             S_stg_vld <= 1'b0;
             S_ack1 <= 1'b0;     S_ack2 <= 1'b0;
@@ -759,6 +769,7 @@ module design_top_wrapper (
             S_stg_miny <= 12'd0; S_stg_maxy <= 12'd0;
             S_stg_valid <= 1'b0; S_stg_cand <= 1'b0;
             S_stg_cnt <= 10'd0;  S_stg_cal <= 2'd0;
+            S_stg_flags <= 8'd0;
             S_stg_gr <= 10'd0;   S_stg_gb <= 10'd0;
             S_stg_ar <= 8'd0;    S_stg_ag <= 8'd0;  S_stg_ab <= 8'd0;
             S_sn_gr <= 10'd0;    S_sn_gb <= 10'd0;
@@ -786,6 +797,7 @@ module design_top_wrapper (
                 S_stg_valid <= S_det_valid;
                 S_stg_cand  <= S_det_cand;
                 S_stg_cnt   <= S_det_cnt;
+                S_stg_flags <= S_det_flags;
                 S_stg_cal   <= S_cal_st;
                 S_stg_gr    <= S_gr100;      // awb 实际生效的增益
                 S_stg_gb    <= S_gb100;
@@ -803,6 +815,7 @@ module design_top_wrapper (
                 S_sn_valid <= S_stg_valid;
                 S_sn_cand  <= S_stg_cand;
                 S_sn_cnt   <= S_stg_cnt;
+                S_sn_flags <= S_stg_flags;
                 S_sn_cal   <= S_stg_cal;
                 S_sn_gr    <= S_stg_gr;
                 S_sn_gb    <= S_stg_gb;
@@ -1436,6 +1449,7 @@ isp_top u_isp_top (
 .O_det_valid     (S_det_valid),
 .O_det_cand      (S_det_cand),
 .O_det_cnt       (S_det_cnt),
+.O_det_flags     (S_det_flags),
 .O_red_minx      (S_red_minx),
 .O_red_maxx      (S_red_maxx),
 .O_red_miny      (S_red_miny),
@@ -1643,6 +1657,7 @@ isp_top u_isp_top (
         .I_det_valid     ( S_det_valid_p    ),
         .I_det_cand      ( S_det_cand_p     ),
         .I_det_cnt       ( S_det_cnt_p      ),
+        .I_det_flags     ( S_det_flags_p    ),
         .I_red_valid     ( S_red_pixel_snapshot[59]    ),
         .I_red_minx      ( S_red_pixel_snapshot[47:36] ),
         .I_red_maxx      ( S_red_pixel_snapshot[35:24] ),

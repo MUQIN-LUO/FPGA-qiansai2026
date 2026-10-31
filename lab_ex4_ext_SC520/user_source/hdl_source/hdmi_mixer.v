@@ -25,6 +25,7 @@ module hdmi_mixer #(
     input wire        I_det_valid,
     input wire        I_det_cand,       // 颜色+面积通过但形状未过（调试用）
     input wire[9:0]   I_det_cnt,        // 命中像素数/16（调试显示）
+    input wire[7:0]   I_det_flags,      // 圆形诊断 {ovf,live,chord,rows,asp,size,pass,valid}
     input wire        I_red_valid,
     input wire[11:0]  I_red_minx, I_red_maxx, I_red_miny, I_red_maxy,
     input wire[7:0]   I_avg_r,          // 中心区域平均色（调试显示）
@@ -114,7 +115,7 @@ module hdmi_mixer #(
     localparam integer OSD_ADV   = OSD_CELL * OSD_SCALE;    // 字距 30
     localparam integer OSD_W     = 8 * OSD_ADV;             // 240（最长一行 LAT:33MS）
     localparam integer OSD_ROWH  = OSD_CELL * OSD_SCALE;    // 30  单行高
-    localparam integer OSD_H     = 7 * OSD_ROWH;            // 210 七行（第 6 行显示 AE 曝光/增益）
+    localparam integer OSD_H     = 8 * OSD_ROWH;            // 240 八行（第 6 行 AE， 第 7 行圆形诊断）
     localparam integer OSD_TOP   = 24;                      // 上边距
     localparam integer OSD_X0    = 24;                      // 左边距
 
@@ -125,15 +126,18 @@ module hdmi_mixer #(
     wire [11:0] S_osd_oy = S_y_2d - OSD_TOP;
 
     // 第 0 行帧率，第 1 行算法，第 2 行延迟，第 3 行 R/G，第 4 行 B，
-    // 第 5 行白平衡增益（R123B185），第 6 行 AE 曝光/增益（E1991G96）。
-    wire [2:0]  S_osd_ridx = (S_osd_oy >= (6*OSD_ROWH)) ? 3'd6 :
+    // 第 5 行白平衡增益（R123B185），第 6 行 AE 曝光/增益（E1991G96），
+    // 第 7 行圆形诊断（D<hex2>C<cnt>）。
+    wire [2:0]  S_osd_ridx = (S_osd_oy >= (7*OSD_ROWH)) ? 3'd7 :
+                             (S_osd_oy >= (6*OSD_ROWH)) ? 3'd6 :
                              (S_osd_oy >= (5*OSD_ROWH)) ? 3'd5 :
                              (S_osd_oy >= (4*OSD_ROWH)) ? 3'd4 :
                              (S_osd_oy >= (3*OSD_ROWH)) ? 3'd3 :
                              (S_osd_oy >= (2*OSD_ROWH)) ? 3'd2 :
                              (S_osd_oy >= OSD_ROWH)     ? 3'd1 : 3'd0;
     wire [11:0] S_osd_oyr  = S_osd_oy -
-                             ((S_osd_ridx == 3'd6) ? 6*OSD_ROWH :
+                             ((S_osd_ridx == 3'd7) ? 7*OSD_ROWH :
+                              (S_osd_ridx == 3'd6) ? 6*OSD_ROWH :
                               (S_osd_ridx == 3'd5) ? 5*OSD_ROWH :
                               (S_osd_ridx == 3'd4) ? 4*OSD_ROWH :
                               (S_osd_ridx == 3'd3) ? 3*OSD_ROWH :
@@ -213,6 +217,22 @@ module hdmi_mixer #(
             else if (x >= 7'd20) div10_99 = 4'd2;
             else if (x >= 7'd10) div10_99 = 4'd1;
             else                 div10_99 = 4'd0;
+        end
+    endfunction
+
+    // 4bit -> 字形编号：0..9 -> 4..13；A=17,B=27,C=28,D=20,E=19,F=0
+    function [4:0] hex_glyph;
+        input [3:0] v;
+        begin
+            case (v)
+                4'd10: hex_glyph = 5'd17;   // A
+                4'd11: hex_glyph = 5'd27;   // B
+                4'd12: hex_glyph = 5'd28;   // C
+                4'd13: hex_glyph = 5'd20;   // D
+                4'd14: hex_glyph = 5'd19;   // E
+                4'd15: hex_glyph = 5'd0;    // F
+                default: hex_glyph = 5'd4 + {1'b0, v};
+            endcase
         end
     endfunction
 
@@ -455,6 +475,20 @@ module hdmi_mixer #(
                     3'd5:    S_osd_ch = 5'd21;              // G
                     3'd6:    S_osd_ch = 5'd4 + S_aeg_t_q;   // 增益十位
                     default: S_osd_ch = 5'd4 + S_aeg_o_q;   // 增益个位
+                endcase
+            end
+            3'd7: begin
+                // 第 7 行：圆形诊断 D<flags hex>C<cnt>
+                //   flags[7:0]={ovf,live,chord,rows,asp,size,pass,valid}
+                case (S_osd_slot)
+                    3'd0:    S_osd_ch = 5'd20;                  // D
+                    3'd1:    S_osd_ch = hex_glyph(I_det_flags[7:4]);
+                    3'd2:    S_osd_ch = hex_glyph(I_det_flags[3:0]);
+                    3'd3:    S_osd_ch = 5'd28;                  // C
+                    3'd4:    S_osd_ch = 5'd4 + S_dc_h;
+                    3'd5:    S_osd_ch = 5'd4 + S_dc_t;
+                    3'd6:    S_osd_ch = 5'd4 + S_dc_o;
+                    default: S_osd_ch = 5'd15;
                 endcase
             end
             3'd2: begin

@@ -101,10 +101,79 @@ module tb_frontend;
     localparam [23:0] C_TAPE  = 24'hdcc83c;
     localparam [23:0] C_BLOCK = 24'h3c78c8;
 
+    // 仿真专用整数平方根（仅测试台使用，不参与综合）
+    function integer isqrt;
+        input integer v;
+        integer r, bit, vv;
+        begin
+            r = 0; bit = 1 << 15; vv = v;
+            while (bit > vv) bit = bit >> 1;
+            while (bit != 0) begin
+                if (vv >= r + bit) begin
+                    vv = vv - r - bit;
+                    r  = (r >> 1) + bit;
+                end
+                else r = r >> 1;
+                bit = bit >> 1;
+            end
+            isqrt = r;
+        end
+    endfunction
+
+    // 球面渐变 + 高光（仿真用近似光照，不是摄像头原始 RGB）。
+    //   mode 0 = 只有球面渐变
+    //   mode 1 = 原始硬边高光（白核 r=20 + 一步 50% 环 r=33，圆心 590,310）
+    //            —— 这是已知边界样例，保留它和真实失败结果，不改成通过。
+    //   mode 2 = 平滑径向高光（线性过渡，圆心 600,320）—— 本轮 RTL 修复覆盖的场景
+    function [23:0] red_sphere_light;
+        input integer px, py, mode;
+        integer dx, dy, lit, rr, gg, bb, hx, hy, d2, d, frac;
+        begin
+            dx = px - 640; dy = py - 360;
+            lit = 70 + ((dx + dy + 200) * 3) / 20;   // 70..130（r=100）
+            if (lit < 55)  lit = 55;
+            if (lit > 130) lit = 130;
+            rr = (210 * lit) / 100; if (rr > 255) rr = 255;
+            gg = (60  * lit) / 100;
+            bb = (60  * lit) / 100;
+            if (mode == 1) begin
+                // 原始硬边模型：一步跳到 50% 白，保留失败样例
+                hx = px - 590; hy = py - 310;
+                d2 = hx*hx + hy*hy;
+                if (d2 <= 400) begin
+                    rr = 235; gg = 228; bb = 220;
+                end
+                else if (d2 <= 1089) begin
+                    rr = (rr + 235) / 2;
+                    gg = (gg + 228) / 2;
+                    bb = (bb + 220) / 2;
+                end
+            end
+            else if (mode == 2) begin
+                // 平滑径向模型：只有白核是严格镜面，过渡按半径线性衰减
+                hx = px - 600; hy = py - 320;
+                d2 = hx*hx + hy*hy;
+                if (d2 <= 2500) begin
+                    d = isqrt(d2);
+                    if (d <= 20) begin
+                        rr = 235; gg = 228; bb = 220;
+                    end
+                    else begin
+                        frac = 50 - d;               // 0..30
+                        rr = (rr*(30-frac) + 235*frac) / 30;
+                        gg = (gg*(30-frac) + 228*frac) / 30;
+                        bb = (bb*(30-frac) + 220*frac) / 30;
+                    end
+                end
+            end
+            red_sphere_light = {rr[7:0], gg[7:0], bb[7:0]};
+        end
+    endfunction
+
     // 小球场景辅助：ball radius / hand rect / finger rect / background
     function [23:0] scene_pix;
         input integer sc, px, py;
-        integer dx, dy, r2, r, i, bx, by, bx0, bx1, by0, by1;
+        integer dx, dy, r2, r, i, bx, by, bx0, bx1, by0, by1, bdx, bdy;
         reg [23:0] bgc;
         begin
             dx = px - 640; dy = py - 360; r2 = dx*dx + dy*dy;
@@ -226,6 +295,53 @@ module tb_frontend;
                         scene_pix = C_SKIN;
                     else scene_pix = C_BLUEC;
                 end
+            // ---- 本轮新增：红球漏检/复杂背景定向场景 ----
+            // 27：红球 d=200 球面渐变 + 原始硬边高光（灰底）
+            //     已知边界：一步 50% 白环会切碎球体，保留失败样例，不当作通过。
+            27: scene_pix = (r2 <= 10000) ? red_sphere_light(px, py, 1) : C_GRAY;
+            // 28：红球 d=200 渐变 + 平滑高光 + 手指压球右缘并与手相连
+            28: begin
+                    if (px >= 700 && px <= 760 && py >= 330 && py <= 395)
+                        scene_pix = C_SKIN;                 // 手指压在球面上
+                    else if (r2 <= 10000) scene_pix = red_sphere_light(px, py, 2);
+                    else if (px >= 760 && px <= 980 && py >= 310 && py <= 410)
+                        scene_pix = C_SKIN;                 // 手
+                    else scene_pix = C_GRAY;
+                end
+            // 29：背景里另有一个"合法圆"（蓝盘 d=120）。形状无法判断谁是目标：
+            //     本场景只记录实际选中的 bbox，不要求红球必胜。
+            29: begin
+                    bdx = px - 250; bdy = py - 180;
+                    if (r2 <= 10000) scene_pix = red_sphere_light(px, py, 2);
+                    else if (bdx*bdx + bdy*bdy <= 3600) scene_pix = C_BLUEC;
+                    else scene_pix = C_GRAY;
+                end
+            // 30：20 个互不相连的背景块，无球（误检/标签耗尽观察）
+            30: begin
+                    scene_pix = C_GRAY;
+                    for (i = 0; i < 20; i = i + 1) begin
+                        bx = 60 + (i % 10) * 120;
+                        by = (i < 10) ? 80 : 300;
+                        if (px >= bx && px <= bx+60 && py >= by && py <= by+30)
+                            scene_pix = ((i % 2) == 0) ? C_RED : C_BLOCK;
+                    end
+                end
+            // 31：球前已有 16 个背景块（标签耗尽）+ 红球渐变 d=200
+            //     已知边界：15 个标签耗尽后新目标被丢弃；HUD flags[7] 必须置 1。
+            31: begin
+                    scene_pix = C_GRAY;
+                    for (i = 0; i < 16; i = i + 1) begin
+                        bx = 60 + (i % 8) * 150;
+                        by = (i < 8) ? 80 : 180;
+                        if (px >= bx && px <= bx+60 && py >= by && py <= by+30)
+                            scene_pix = ((i % 2) == 0) ? C_RED : C_BLOCK;
+                    end
+                    if (r2 <= 10000) scene_pix = red_sphere_light(px, py, 2);
+                end
+            // 32：只有球面渐变、没有高光（隔离高光是否为碎片化诱因）
+            32: scene_pix = (r2 <= 10000) ? red_sphere_light(px, py, 0) : C_GRAY;
+            // 33：平滑径向高光（本轮 RTL 修复覆盖的正常场景）
+            33: scene_pix = (r2 <= 10000) ? red_sphere_light(px, py, 2) : C_GRAY;
             default: scene_pix = C_GRAY;
             endcase
         end
@@ -323,6 +439,18 @@ module tb_frontend;
             fg_x >= 12'd660 && fg_x <= 12'd700) begin
             $display("  CELL y=%0d x=%0d mask=%b rgb=%h", fg_y, fg_x, fg_mask, fg_rgb);
         end
+        // 场景 28：红球/手指边界（看 col_split/highlight 是否误吞肤色）
+        if (only_sc == 28 && fg_valid && fg_mask != 4'd0 &&
+            (fg_y == 12'd360 || fg_y == 12'd340) &&
+            fg_x >= 12'd680 && fg_x <= 12'd780) begin
+            $display("  CELL28 y=%0d x=%0d mask=%b rgb=%h in_run=%b run_col=%h split=%b nosplit=%b spec=%b",
+                     fg_y, fg_x, fg_mask, fg_rgb,
+                     u_ccl.u_circle_detect.in_run,
+                     u_ccl.u_circle_detect.run_col,
+                     u_ccl.u_circle_detect.col_split,
+                     u_ccl.u_circle_detect.no_split,
+                     u_ccl.u_circle_detect.specular);
+        end
     end
 
     // CCL 域内采样：O_evt 当拍标签表尚未被 S_ev_fin 清除
@@ -341,6 +469,35 @@ module tb_frontend;
                      u_ccl.u_circle_detect.l_minx[2], u_ccl.u_circle_detect.l_maxx[2],
                      u_ccl.u_circle_detect.l_miny[2], u_ccl.u_circle_detect.l_maxy[2],
                      u_ccl.u_circle_detect.l_col[2]);
+        end
+    end
+
+    // 评估扫描期逐标签取证（S_ev=5..19 时 e_live 才是稳定值）
+    always @(posedge ccl_clk) begin
+        #1;
+        if (only_sc >= 27 &&
+            u_ccl.u_circle_detect.S_ev >= 5'd5 &&
+            u_ccl.u_circle_detect.S_ev <= 5'd19 &&
+            u_ccl.u_circle_detect.e_sel && u_ccl.u_circle_detect.e_live) begin
+            $display("  EVAL M2lab=%0d wpx=%0d hpx=%0d cnt=%0d chord=%0d rows=%0d bbox=[%0d,%0d]-[%0d,%0d] pass=%b cand=%b ok(s=%b a=%b r=%b c=%b) live=%b col=%h",
+                     u_ccl.u_circle_detect.M2_lab,
+                     u_ccl.u_circle_detect.M2_wpx,
+                     u_ccl.u_circle_detect.M2_hpx,
+                     u_ccl.u_circle_detect.M2_cnt,
+                     u_ccl.u_circle_detect.M2_chord,
+                     u_ccl.u_circle_detect.M2_rows,
+                     u_ccl.u_circle_detect.M2_minx * 4,
+                     u_ccl.u_circle_detect.M2_maxx * 4 + 3,
+                     u_ccl.u_circle_detect.M2_miny,
+                     u_ccl.u_circle_detect.M2_maxy,
+                     u_ccl.u_circle_detect.e_pass,
+                     u_ccl.u_circle_detect.e_cand,
+                     u_ccl.u_circle_detect.e_size_ok,
+                     u_ccl.u_circle_detect.e_asp_ok,
+                     u_ccl.u_circle_detect.e_rows_ok,
+                     u_ccl.u_circle_detect.e_chord_ok,
+                     u_ccl.u_circle_detect.M2_live,
+                     u_ccl.u_circle_detect.l_col[u_ccl.u_circle_detect.M2_lab]);
         end
     end
 
@@ -364,6 +521,20 @@ module tb_frontend;
                      last_maxx, last_maxy, last_w, last_h, last_ovf, bg_r, bg_g, bg_b);
             $display("  DBG fg_valid=%0d fg_tuser=%0d fg_hit_beats=%0d full=%0d drop=%0d",
                      dbg_fgv-v0, dbg_fgu-u0, dbg_fgm-m0, dbg_fullcnt-f0, dbg_dropcnt-d0);
+            if (emin < 0)
+                $display("  SCENE_RESULT %0s: expected KNOWN-LIMIT | actual pass=%0d cand=%0d bbox=(%0d,%0d)-(%0d,%0d) w=%0d h=%0d ovf=%0d",
+                         name, last_pass, last_cand, last_minx, last_miny, last_maxx,
+                         last_maxy, last_w, last_h, last_ovf);
+            else if (emin == 0)
+                $display("  SCENE_RESULT %0s: expected no-pass | actual pass=%0d cand=%0d bbox=(%0d,%0d)-(%0d,%0d) w=%0d h=%0d => %0s",
+                         name, last_pass, last_cand, last_minx, last_miny, last_maxx,
+                         last_maxy, last_w, last_h,
+                         (last_pass==0) ? "PASS" : "FAIL");
+            else
+                $display("  SCENE_RESULT %0s: expected pass w=%0d..%0d | actual pass=%0d cand=%0d bbox=(%0d,%0d)-(%0d,%0d) w=%0d h=%0d => %0s",
+                         name, emin, emax, last_pass, last_cand, last_minx, last_miny,
+                         last_maxx, last_maxy, last_w, last_h,
+                         (last_pass==1 && last_w>=emin && last_w<=emax) ? "PASS" : "FAIL");
         end
     endtask
 
@@ -386,6 +557,50 @@ module tb_frontend;
         end
     endtask
 
+    // 单场景运行时只执行该场景的断言：避免用上一个场景的 last_* 产生假失败。
+    task check_sc;
+        input integer sc;
+        input [1023:0] name;
+        input cond;
+        begin
+            if (only_sc < 0 || only_sc == sc) check(name, cond);
+        end
+    endtask
+
+    task check_pass_sc;
+        input integer sc;
+        input [1023:0] name;
+        input integer emin, emax;
+        begin
+            if (only_sc < 0 || only_sc == sc) check_pass(name, emin, emax);
+        end
+    endtask
+
+    // 已知边界：打印实际结果，但不计入回归错误。
+    task limit_note;
+        input integer sc;
+        input [1023:0] name;
+        begin
+            if (only_sc < 0 || only_sc == sc)
+                $display("  [LIMIT] %0s (actual pass=%0d cand=%0d bbox=(%0d,%0d)-(%0d,%0d) w=%0d h=%0d ovf=%0d)",
+                         name, last_pass, last_cand, last_minx, last_miny,
+                         last_maxx, last_maxy, last_w, last_h, last_ovf);
+        end
+    endtask
+
+    // 目标必须在中心球的位置（而不是高光/背景物体）
+    task check_ball_bbox_sc;
+        input integer sc;
+        input [1023:0] name;
+        begin
+            if (only_sc < 0 || only_sc == sc)
+                check(name, last_pass==1 &&
+                      last_w>=190 && last_w<=216 && last_h>=190 && last_h<=216 &&
+                      last_minx<=560 && last_maxx>=720 &&
+                      last_miny<=280 && last_maxy>=440);
+        end
+    endtask
+
     initial begin
         if (!$value$plusargs("SCENE_ONLY=%d", only_sc)) only_sc = -1;
         repeat (20) @(negedge mipi_clk);
@@ -393,48 +608,72 @@ module tb_frontend;
         repeat (20) @(negedge mipi_clk);
 
         // ---- 大球/基础场景 ----
-        run_scene(0,  "green ball",                 2, 190,216); check_pass("ball alone passes",190,216);
-        run_scene(1,  "green ball + hand",          0, 186,216); check_pass("hand+ball: ball separated",186,216);
-        run_scene(2,  "ball + clutter",             0, 186,216); check_pass("ball + clutter: ball passes",186,216);
-        run_scene(3,  "no ball",                    0, 0,0);     check("no ball: no pass", last_pass==0);
-        run_scene(4,  "yellow tape",                0, 0,0);     check("tape: no pass", last_pass==0);
-        run_scene(5,  "blue ball",                  0, 190,216); check_pass("blue ball passes",190,216);
-        run_scene(6,  "tiny ball r=10",             0, 0,0);     check("tiny ball: no pass", last_pass==0);
-        run_scene(7,  "blue cloth + green ball",    2, 186,216); check_pass("colored bg: ball passes",186,216);
-        run_scene(8,  "red ball + hand",            2, 186,216); check_pass("red hand+ball: separated",186,216);
-        run_scene(9,  "green ball + fingers",       0, 186,216); check_pass("fingers over ball: passes",186,216);
-        run_scene(10, "red ball",                   0, 190,216); check_pass("red ball passes",190,216);
-        run_scene(11, "square block",               0, 0,0);     check("square block: no pass", last_pass==0);
-        run_scene(12, "two-tone bg + green ball",   2, 186,216); check_pass("two-tone bg: ball passes",186,216);
-        run_scene(13, "two-tone bg + red + hand",   0, 186,216); check_pass("two-tone bg hand+ball",186,216);
-        run_scene(14, "blue cloth, no ball",        2, 0,0);     check("colored bg no ball: no pass", last_pass==0);
-        run_scene(15, "blue cloth + tape",          0, 0,0);     check("colored bg tape: no pass", last_pass==0);
+        run_scene(0,  "green ball",                 2, 190,216); check_pass_sc(0, "ball alone passes",190,216);
+        run_scene(1,  "green ball + hand",          0, 186,216); check_pass_sc(1, "hand+ball: ball separated",186,216);
+        run_scene(2,  "ball + clutter",             0, 186,216); check_pass_sc(2, "ball + clutter: ball passes",186,216);
+        run_scene(3,  "no ball",                    0, 0,0);     check_sc(3, "no ball: no pass", last_pass==0);
+        run_scene(4,  "yellow tape",                0, 0,0);     check_sc(4, "tape: no pass", last_pass==0);
+        run_scene(5,  "blue ball",                  0, 190,216); check_pass_sc(5, "blue ball passes",190,216);
+        run_scene(6,  "tiny ball r=10",             0, 0,0);     check_sc(6, "tiny ball: no pass", last_pass==0);
+        run_scene(7,  "blue cloth + green ball",    2, 186,216); check_pass_sc(7, "colored bg: ball passes",186,216);
+        run_scene(8,  "red ball + hand",            2, 186,216); check_pass_sc(8, "red hand+ball: separated",186,216);
+        run_scene(9,  "green ball + fingers",       0, 186,216); check_pass_sc(9, "fingers over ball: passes",186,216);
+        run_scene(10, "red ball",                   0, 190,216); check_pass_sc(10, "red ball passes",190,216);
+        run_scene(11, "square block",               0, 0,0);     check_sc(11, "square block: no pass", last_pass==0);
+        run_scene(12, "two-tone bg + green ball",   2, 186,216); check_pass_sc(12, "two-tone bg: ball passes",186,216);
+        run_scene(13, "two-tone bg + red + hand",   0, 186,216); check_pass_sc(13, "two-tone bg hand+ball",186,216);
+        run_scene(14, "blue cloth, no ball",        2, 0,0);     check_sc(14, "colored bg no ball: no pass", last_pass==0);
+        run_scene(15, "blue cloth + tape",          0, 0,0);     check_sc(15, "colored bg tape: no pass", last_pass==0);
 
         // ---- 小尺寸球（本轮重点）----
-        run_scene(16, "green d=100",                2, 84,116);  check_pass("d=100 passes",84,116);
-        run_scene(17, "green d=60",                 0, 48,76);   check_pass("d=60 passes",48,76);
-        run_scene(18, "green d=40",                 0, 30,56);   check_pass("d=40 passes",30,56);
-        run_scene(19, "green d=100 + hand",         0, 80,116);  check_pass("d=100 + hand separated",80,116);
-        run_scene(20, "green d=60 + hand",          0, 44,76);   check_pass("d=60 + hand separated",44,76);
-        run_scene(21, "green d=40 + hand",          0, 28,56);   check_pass("d=40 + hand separated",28,56);
-        run_scene(22, "green d=60 + finger + hand", 0, 44,76);   check_pass("d=60 fingers: passes",44,76);
-        run_scene(23, "green d=60 blue bg",         2, 44,76);   check_pass("d=60 colored bg: passes",44,76);
-        run_scene(24, "green d=60 + hand 2-tone",   0, 44,76);   check_pass("d=60 two-tone + hand",44,76);
-        run_scene(25, "red d=60 + hand",            2, 44,76);   check_pass("red d=60 + hand",44,76);
-        run_scene(26, "green d=40 + hand blue bg",  2, 28,56);   check_pass("d=40 colored bg + hand",28,56);
+        run_scene(16, "green d=100",                2, 84,116);  check_pass_sc(16, "d=100 passes",84,116);
+        run_scene(17, "green d=60",                 0, 48,76);   check_pass_sc(17, "d=60 passes",48,76);
+        run_scene(18, "green d=40",                 0, 30,56);   check_pass_sc(18, "d=40 passes",30,56);
+        run_scene(19, "green d=100 + hand",         0, 80,116);  check_pass_sc(19, "d=100 + hand separated",80,116);
+        run_scene(20, "green d=60 + hand",          0, 44,76);   check_pass_sc(20, "d=60 + hand separated",44,76);
+        run_scene(21, "green d=40 + hand",          0, 28,56);   check_pass_sc(21, "d=40 + hand separated",28,56);
+        run_scene(22, "green d=60 + finger + hand", 0, 44,76);   check_pass_sc(22, "d=60 fingers: passes",44,76);
+        run_scene(23, "green d=60 blue bg",         2, 44,76);   check_pass_sc(23, "d=60 colored bg: passes",44,76);
+        run_scene(24, "green d=60 + hand 2-tone",   0, 44,76);   check_pass_sc(24, "d=60 two-tone + hand",44,76);
+        run_scene(25, "red d=60 + hand",            2, 44,76);   check_pass_sc(25, "red d=60 + hand",44,76);
+        run_scene(26, "green d=40 + hand blue bg",  2, 28,56);   check_pass_sc(26, "d=40 colored bg + hand",28,56);
 
-        // ---- FIFO 溢出注入与恢复（真实行结构下的突发上界）----
-        $display("=== overflow injection (no blanking) ===");
-        full0 = dbg_fullcnt;
-        drive_overflow_frame(0);
-        $display("  overflow frame: full_cycles=%0d (sticky drop=%0d)",
-                 dbg_fullcnt-full0, dbg_drop);
-        check("overflow injection exercised full", (dbg_fullcnt-full0) > 0);
+        // ---- 红球漏检/复杂背景定向场景（短回归：SCENE_ONLY=27..33）----
+        // 27 是原始硬边高光失败样例：保留真实结果，作为已知边界报告。
+        run_scene(27, "hard-edge highlight (known limit)", 1, -1,0);
+        limit_note(27, "hard-edge 50% highlight may fragment the ball");
+        run_scene(28, "smooth highlight + contacting finger", 1, 186,216);
+        check_ball_bbox_sc(28, "smooth highlight + finger: ball bbox");
+        run_scene(29, "red ball + genuine background disc", 1, 100,220);
+        check_sc(29, "background disc: a genuine circle is reported; ball-vs-disc not claimable",
+                 last_pass==1 &&
+                 ((last_minx<=560 && last_maxx>=720) ||      // 红球
+                  (last_minx<=200 && last_maxx>=300)));      // 背景蓝盘
+        limit_note(29, "two genuine circles: shape alone cannot choose the target");
+        run_scene(30, "complex bg, no ball", 1, 0,0);
+        check_sc(30, "complex bg no ball: no pass", last_pass==0);
+        run_scene(31, "16 bg blobs + red ball", 1, -1,0);
+        check_sc(31, "label exhaustion: O_ovf is asserted", last_ovf==1);
+        limit_note(31, "15-label capacity exhausted: new target blurred; HUD ovf=1");
+        run_scene(32, "red sphere gradient only", 1, 190,216);
+        check_ball_bbox_sc(32, "gradient-only ball: bbox on ball");
+        run_scene(33, "smooth specular highlight", 1, 190,216);
+        check_ball_bbox_sc(33, "smooth highlight: ball bbox");
 
-        // 恢复：正常行结构的绿球帧必须重新检出
-        run_scene(0, "recovery after overflow", 2, 190,216);
-        check("recovery: ball detected after overflow",
-              last_pass==1 && last_w>=190 && last_w<=216);
+        // ---- FIFO 溢出注入与恢复（只在完整回归里跑）----
+        if (only_sc < 0) begin
+            $display("=== overflow injection (no blanking) ===");
+            full0 = dbg_fullcnt;
+            drive_overflow_frame(0);
+            $display("  overflow frame: full_cycles=%0d (sticky drop=%0d)",
+                     dbg_fullcnt-full0, dbg_drop);
+            check("overflow injection exercised full", (dbg_fullcnt-full0) > 0);
+
+            // 恢复：正常行结构的绿球帧必须重新检出
+            run_scene(0, "recovery after overflow", 2, 190,216);
+            check("recovery: ball detected after overflow",
+                  last_pass==1 && last_w>=190 && last_w<=216);
+        end
 
         $display("\n================================================");
         if (errors==0) $display("RESULT: PASS (0 errors)");
