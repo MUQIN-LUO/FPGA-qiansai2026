@@ -29,6 +29,7 @@ module tb_ccl_regression;
     reg clr   = 1'b0;
     reg valid = 1'b0;
     reg [3:0]  hit = 4'd0;
+    reg [14:0] rgb = 15'd0;       // 统一颜色：几何场景下颜色一致性不触发
     reg [11:0] x   = 12'd0;
     reg [11:0] y   = 12'd0;
 
@@ -51,7 +52,7 @@ module tb_ccl_regression;
 
     isp_ccl_circle u_dut (
         .I_clk(clk), .I_rst_n(rst_n), .I_clr(clr),
-        .I_valid(valid), .I_hit(hit), .I_x(x), .I_y(y),
+        .I_valid(valid), .I_hit(hit), .I_rgb(rgb), .I_x(x), .I_y(y),
         .O_evt(d_evt), .O_w(d_w), .O_h(d_h), .O_cnt(d_cnt), .O_chord(d_chord),
         .O_rows(d_rows), .O_minx(d_minx), .O_maxx(d_maxx), .O_miny(d_miny), .O_maxy(d_maxy),
         .O_pass(d_pass), .O_cand(d_cand),

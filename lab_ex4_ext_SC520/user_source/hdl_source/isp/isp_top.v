@@ -8,13 +8,14 @@ module isp_top #(
     parameter [29:0] CAL_COMMIT_TMO = 30'd500_000_000,
 
     // ---- 检测模式（对应赛题改造需求 1）----
-    //   0 = 颜色无关的圆形检测（默认）：前景 = 色度 ∪ 亮度梯度，圆形判据落在
+    //   0 = 颜色无关的圆形检测（默认）：前景 = 背景色差 ∪ 亮度梯度，圆形判据落在
     //       逐行弦长 / 外接框面积比（圆≈0.785，方块≈1.0）等轮廓特征上。
     //   1 = 原来的红/黄颜色判据（代码完整保留，仅被这个开关禁用，默认关闭）。
     parameter        DET_MODE     = 1'b0,
-    // 色度判据门限：max(R,G,B)-min(R,G,B) >= FG_CHROMA_TH 即视为"有彩色"。
-    // 只判"有彩色"，不分色相，因此红/黄/蓝/绿/橙/紫的圆都能进候选。
-    parameter [7:0]  FG_CHROMA_TH = 8'd20,
+    // 背景色差门限：|R-Rbg|+|G-Gbg|+|B-Bbg| >= FG_BG_TH 即视为前景。
+    // Rbg/Gbg/Bbg 为画面四周环带的帧级均值（isp_bg_est）。只判"与背景不同"，
+    // 与目标色相无关；因此蓝布/木桌/草地等彩色背景不会被整片判成前景。
+    parameter [9:0]  FG_BG_TH     = 10'd60,
     // 圆形外接框尺寸窗（像素）
     parameter [11:0] CIRC_MIN_W   = 12'd24,
     parameter [11:0] CIRC_MAX_W   = 12'd720,
@@ -27,6 +28,7 @@ module isp_top #(
 ) (
     input 			axi4s_video_aclk,
     input 			I_ccl_src_clk,   // 50 MHz 系统时钟（与 MIPI 异步），供 CCL 域使用
+    input 			I_cal_mode,      // K1 长按电平：0=灰度世界自动，1=白纸标定/锁定
     input 			I_rst_n			,
     input 			I_tlast			,
     input 			I_tuser			,
@@ -78,8 +80,8 @@ wire         m_aixs_tvalid;  //synthesis keep
   // ★ 唯一 owner：S_wbr / S_wbb 只在"标定 FSM"那一个 always 块里写，
   //   别处一律只读。旧动态 AWB 估计器已整体删除（本轮不用连续自适应），
   //   否则两个 always 同时写会造成多驱动（上次综合就是死在 HDL-8007）。
-  reg  [19:0] S_wbr;       // 请求 R 增益（Q16）
-  reg  [19:0] S_wbb;       // 请求 B 增益（Q16）
+  wire [19:0] S_wbr;       // 请求 R 增益（Q16，由 isp_awb_arbiter 驱动）
+  wire [19:0] S_wbb;       // 请求 B 增益（Q16，由 isp_awb_arbiter 驱动）
 
   // awb 内部真正生效的增益（它在自己首像素处整对锁存）与锁存事件
   wire [19:0] S_gain_r_ap;
@@ -328,12 +330,34 @@ awb #(
         .O_tready()
     );
 
+    // ------------------------------------------------------------------
+    // 背景色估计：画面四周环带的帧级均值（与目标同源，AWB 之后）
+    //   掩膜判据从"绝对色度"改为"与背景的色差"，彩色背景不再整帧成前景。
+    //   首帧用环带均值初始化，之后向新均值靠 1/4；换背景后约 1 帧收敛。
+    // ------------------------------------------------------------------
+    wire [7:0] S_bg_r, S_bg_g, S_bg_b;
+
+    isp_bg_est #(
+        .IMG_WIDTH (1280),
+        .IMG_HEIGHT(720)
+    ) u_bg_est (
+        .I_clk   (axi4s_video_aclk),
+        .I_rst_n (I_rst_n),
+        .I_tvalid(S_rgb_valid),
+        .I_tuser (S_rgb_tuser),
+        .I_tdata (S_rgb_data),
+        .O_bg_r  (S_bg_r),
+        .O_bg_g  (S_bg_g),
+        .O_bg_b  (S_bg_b)
+    );
+
     wire [3:0]  S_fg_mask;
+    wire [14:0] S_fg_rgb;
     wire        S_fg_valid, S_fg_tlast, S_fg_tuser;
     wire [11:0] S_fg_x, S_fg_y;
 
     isp_fg_mask #(
-        .CHROMA_TH (FG_CHROMA_TH)
+        .BG_TH (FG_BG_TH)
     ) u_fg_mask (
         .I_clk       (axi4s_video_aclk),
         .I_rst_n     (I_rst_n),
@@ -341,11 +365,15 @@ awb #(
         .I_tlast     (S_fgin_tlast),
         .I_tuser     (S_fgin_tuser),
         .I_tdata     (S_fgin_data),
+        .I_bg_r      (S_bg_r),
+        .I_bg_g      (S_bg_g),
+        .I_bg_b      (S_bg_b),
         .I_edge_valid(S_fgedge_tvalid),
         .I_edge_tlast(S_fgedge_tlast),
         .I_edge_tuser(S_fgedge_tuser),
         .I_edge_tdata(S_fgedge_tdata),
         .O_mask      (S_fg_mask),
+        .O_rgb       (S_fg_rgb),
         .O_valid     (S_fg_valid),
         .O_tlast     (S_fg_tlast),
         .O_tuser     (S_fg_tuser),
@@ -441,109 +469,36 @@ awb #(
                               rgb_to_gray(S_rgb_data[23:0]) };
 
     // ==================================================================
-    // 波普风格（扩展要求 1）：色调分离 + 假色彩
-    //   灰度量化成 4 档，每档映射到一组高饱和配色，
-    //   还原《玛丽莲·梦露》丝网印刷的平涂色块效果。
-    //   4 组配色通过 S_pal 切换（后续接入自动轮换）。
+    // 波普风格（扩展要求 1）：抽取为 isp_pop96，设计与单元测试共用
+    //   亮度 4 档 + 4 组调色板 + 套印错位（x-2），保持清晰阶梯。
+    //   HUE_AWARE=0（默认）保持现有观感；改为 1 时在同一亮度档内按源
+    //   主色相给平涂色加冷/暖偏移，使同亮度的手与绿球不再同色块。
+    //   这是风格层的色相区分，不是物体识别，也不会新增亮度层次。
     // ==================================================================
     wire [1:0] S_pal = I_pal;            // 配色方案，由顶层每 3 秒轮换
+    // 0 = 仅亮度分档（旧观感）；1 = 同亮度档内按源色相做冷暖偏移。
+    // 板测"POP 里手与绿球同色"的直接修复：tb_pop 已验证 0/1 两种模式，
+    // 色相偏移只作用于同档内、不新增亮度层次，故本轮启用。
+    localparam POP_HUE_AWARE = 1'b1;
 
-    function [23:0] pop_pal;
-        input [1:0] idx;                 // 灰度档 0=最暗 .. 3=最亮
-        input [1:0] pal;                 // 配色方案
-        begin
-            case (pal)
-                2'd1: case (idx)
-                    2'd0: pop_pal = 24'h00574b;
-                    2'd1: pop_pal = 24'hffe0b2;
-                    2'd2: pop_pal = 24'h00e5ff;
-                    default: pop_pal = 24'hff00aa;
-                endcase
-                2'd2: case (idx)
-                    2'd0: pop_pal = 24'hd32f2f;
-                    2'd1: pop_pal = 24'hffc0cb;
-                    2'd2: pop_pal = 24'h1e5aa8;
-                    default: pop_pal = 24'hff7a00;
-                endcase
-                2'd3: case (idx)
-                    2'd0: pop_pal = 24'h202020;
-                    2'd1: pop_pal = 24'hffd400;
-                    2'd2: pop_pal = 24'hff3b30;
-                    default: pop_pal = 24'hf2f2f2;
-                endcase
-                default: case (idx)      // 方案 0：梦露经典冷暖配
-                    2'd0: pop_pal = 24'h7b2d8e;   // 阴影 深紫
-                    2'd1: pop_pal = 24'hff9ec4;   // 中间调 皮肤粉
-                    2'd2: pop_pal = 24'hffd400;   // 亮部 头发黄
-                    default: pop_pal = 24'h00c8c8; // 最亮 背景青
-                endcase
-            endcase
-        end
-    endfunction
+    wire [95:0] pop_comb;
 
-    // ==================================================================
-    // 【本轮修复】POP 分档阈值改到线性光域
-    // ------------------------------------------------------------------
-    // 连线事实：pop_comb 取自 S_rgb_data（AWB 之后、gamma 之前），
-    //           而 gamma 是在 sel_data 选择之后才施加（gam_data）。
-    //           即 POP 在【线性光域】做量化。
-    // 原阈值 64/128/192 是【感知域(sRGB)】的分割点，直接切线性数据意味着
-    // 三个分割点落在感知亮度 138/190/229 上 —— 正常室内场景绝大部分像素
-    // 的感知亮度低于 138，全部落进档 0，整屏塌成单一颜色。
-    //
-    // 线性域等效阈值（gamma 2.2，满量程 253）：
-    //   253*( 64/255)^2.2 = 12
-    //   253*(128/255)^2.2 = 56
-    //   253*(192/255)^2.2 = 135
-    // 只改分割点，不动配色表，波普风格保持不变。
-    //
-    // 实测（线性光域人物场景 5/46/182/25，比例 30/35/20/15）：
-    //   旧阈值 b0=80% b1=0%  b2=20% b3=0%   -> 几乎单色
-    //   新阈值 b0=30% b1=50% b2=0%  b3=20%  -> 三档可辨
-    // 均匀场景仍 100% 落在单档，不会人为制造层次。
-    //
-    // POP_LEGACY_TH=1 可退回原阈值（默认关闭）。
-    // ==================================================================
-    localparam        POP_LEGACY_TH = 1'b0;
-    localparam [7:0]  POP_T0 = POP_LEGACY_TH ? 8'd64  : 8'd12;
-    localparam [7:0]  POP_T1 = POP_LEGACY_TH ? 8'd128 : 8'd56;
-    localparam [7:0]  POP_T2 = POP_LEGACY_TH ? 8'd192 : 8'd135;
-
-    function [1:0] pop_band;             // 8bit 线性域灰度 -> 4 档
-        input [7:0] g;
-        begin
-            if      (g < POP_T0) pop_band = 2'd0;
-            else if (g < POP_T1) pop_band = 2'd1;
-            else if (g < POP_T2) pop_band = 2'd2;
-            else                 pop_band = 2'd3;
-        end
-    endfunction
-
-    // 每拍 4 个像素的灰度档位（像素 0 为最左）
-    wire [1:0] b0 = pop_band(rgb_to_y8(S_rgb_data[95:72]));
-    wire [1:0] b1 = pop_band(rgb_to_y8(S_rgb_data[71:48]));
-    wire [1:0] b2 = pop_band(rgb_to_y8(S_rgb_data[47:24]));
-    wire [1:0] b3 = pop_band(rgb_to_y8(S_rgb_data[23:0]));
-
-    // 上一拍 4 个像素的档位，用来取 x-2 位置的档位
-    reg [7:0] S_bands_d;
-
-    wire [1:0] s0 = S_bands_d[5:4];      // x-2 落在上一拍第 3 个像素
-    wire [1:0] s1 = S_bands_d[7:6];      // x-2 落在上一拍第 4 个像素
-    wire [1:0] s2 = b0;
-    wire [1:0] s3 = b1;
-
-    // 套印错位：中间调色层（皮肤粉 / 头发黄）按 x-2 的档位着色，
-    // 还原丝网印刷中套色没对齐、颜色向右溢出的效果；最暗/最亮层不动。
-    wire [1:0] e0 = ((s0 == 2'd1) || (s0 == 2'd2)) ? s0 : b0;
-    wire [1:0] e1 = ((s1 == 2'd1) || (s1 == 2'd2)) ? s1 : b1;
-    wire [1:0] e2 = ((s2 == 2'd1) || (s2 == 2'd2)) ? s2 : b2;
-    wire [1:0] e3 = ((s3 == 2'd1) || (s3 == 2'd2)) ? s3 : b3;
-
-    wire [95:0] pop_comb = { pop_pal(e0, S_pal),
-                             pop_pal(e1, S_pal),
-                             pop_pal(e2, S_pal),
-                             pop_pal(e3, S_pal) };
+    // POP 内部已流水化（级 1：档位/色相；级 2：调色板+tint），
+    // 套印历史在模块内部按 valid 推进并在行首/帧首清零。
+    // 顶层选择 pop_d1（见下方 sel_data），与 raw_d2/gray_d2 及
+    // raw_v2/u2/l2 严格同拍。
+    isp_pop96 #(
+        .HUE_AWARE (POP_HUE_AWARE)
+    ) u_pop96 (
+        .I_clk    (axi4s_video_aclk),
+        .I_rst_n  (I_rst_n),
+        .I_tvalid (S_rgb_valid),
+        .I_tuser  (S_rgb_tuser),
+        .I_tlast  (S_rgb_tlast),
+        .I_tdata  (S_rgb_data),
+        .I_pal    (S_pal),
+        .O_tdata  (pop_comb)
+    );
 
     // ==================================================================
     // 黄色目标检测（扩展要求 2）
@@ -771,6 +726,7 @@ awb #(
         .I_rst_n    (I_rst_n),
         .I_fg_valid (S_fg_valid),
         .I_fg_mask  (S_fg_mask),
+        .I_fg_rgb   (S_fg_rgb),
         .I_fg_tuser (S_fg_tuser),
         .I_fg_tlast (S_fg_tlast),
         .I_det_mask (S_det_mask),
@@ -907,6 +863,9 @@ awb #(
     //   并且【撤销待提交请求】（S_wbr/S_wbb 退回上次真正生效的一对）。
     //   绝不出现"报 OK 但请求还挂着、视频恢复后偷偷生效"。
     // ==================================================================
+    // 运行时白平衡模式：AWB_MODE 参数可强制标定模式；默认 0 时由 K1 长按电平切换
+    wire S_awb_mode = AWB_MODE | I_cal_mode;
+
     localparam [19:0] WB_INIT_R = 20'd76824;    // 上电默认 R（Q16 1.1722x）
     localparam [19:0] WB_INIT_B = 20'd138731;   // 上电默认 B（Q16 2.1169x）
 
@@ -961,7 +920,9 @@ awb #(
     //   S_cal_tmo 在 CAL_APPLY 里清 0，进 SHDW 后逐拍 +1；
     //   一旦到 CAL_TMO 这一拍 en 已经是 0 —— 那一拍及以后都不可能再提交，
     //   所以"到期撤销 pending"不可能与"同一拍正在提交"冲突。
-    assign S_gain_commit_en = (S_cal_st == CAL_SHDW) && (S_cal_tmo < CAL_COMMIT_TMO);
+    // CAL_SHDW 的提交窗口；仅供 AWB_MODE=1（白纸一键标定）使用。
+    // 默认 AWB_MODE=0 的提交许可由 isp_awb_arbiter 根据灰度世界提交事件产生。
+    wire S_cal_shdw_en = (S_cal_st == CAL_SHDW) && (S_cal_tmo < CAL_COMMIT_TMO);
     reg [19:0] S_cal_gr, S_cal_gb;       // 算出的候选增益
 
     // 除法器（36 拍恢复余数法，每帧只跑一次，不在像素通路上）
@@ -1004,6 +965,12 @@ awb #(
             S_cal_commit <= 1'b0;
             O_cal_st <= 2'd0;
         end
+        else if (!S_awb_mode && S_cal_busy) begin
+            // K1 再次长按切回自动：中止未完成的标定，检测屏蔽随之解除
+            S_cal_st     <= CAL_OFF;
+            S_cal_commit <= 1'b0;
+            S_cal_tmo    <= 30'd0;
+        end
         else begin
             S_cal_commit <= 1'b0;
             case (S_cal_st)
@@ -1013,7 +980,7 @@ awb #(
                     S_cal_tmo <= 30'd0;
                     if ((S_mask_hold != 8'd0) && S_frm_evt_det)
                         S_mask_hold <= S_mask_hold - 8'd1;
-                    if (I_cal_trig) begin
+                    if (I_cal_trig && S_awb_mode) begin
                         S_cal_st    <= CAL_ACC;
                         S_cal_nf    <= 3'd0;
                         S_cal_armed <= 1'b0;
@@ -1180,27 +1147,26 @@ awb #(
         .O_commit (S_gw_commit)
     );
 
-    // ---- 增益唯一所有者：AWB_MODE 决定哪一路的请求生效 ----
-    always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
-        if (!I_rst_n) begin
-            S_wbr <= WB_INIT_R;
-            S_wbb <= WB_INIT_B;
-        end
-        else if (AWB_MODE == 1'b0) begin
-            // 灰度世界（默认）：帧尾整组更新
-            if (S_gw_commit) begin
-                S_wbr <= S_gw_gain_r;
-                S_wbb <= S_gw_gain_b;
-            end
-        end
-        else begin
-            // 白纸一键标定（备用模式）
-            if (S_cal_commit) begin
-                S_wbr <= S_cal_req_r;
-                S_wbb <= S_cal_req_b;
-            end
-        end
-    end
+    // ---- 增益唯一所有者 + 帧首提交许可（与回归测试共用同一份 RTL） ----
+    isp_awb_arbiter #(
+        .INIT_R (WB_INIT_R),
+        .INIT_B (WB_INIT_B)
+    ) u_awb_arb (
+        .I_clk          (axi4s_video_aclk),
+        .I_rst_n        (I_rst_n),
+        .I_awb_mode     (S_awb_mode),
+        .I_gw_commit    (S_gw_commit),
+        .I_gw_r         (S_gw_gain_r),
+        .I_gw_b         (S_gw_gain_b),
+        .I_cal_commit   (S_cal_commit),
+        .I_cal_r        (S_cal_req_r),
+        .I_cal_b        (S_cal_req_b),
+        .I_cal_commit_en(S_cal_shdw_en),
+        .I_gain_evt     (S_gain_evt),
+        .O_wr           (S_wbr),
+        .O_wb           (S_wbb),
+        .O_commit_en    (S_gain_commit_en)
+    );
 
     // ------------------------------------------------------------------
     // 检测整组就绪事件（供跨域快照握手）
@@ -1453,7 +1419,6 @@ awb #(
             raw_d1  <= S_rgb_data;   raw_d2  <= raw_d1;
             gray_d1 <= gray_comb;     gray_d2 <= gray_d1;
             pop_d1  <= pop_comb;      pop_d2  <= pop_d1;
-            S_bands_d <= {b3, b2, b1, b0};
             raw_v1  <= S_rgb_valid;  raw_v2  <= raw_v1;
             raw_u1  <= S_rgb_tuser;   raw_u2  <= raw_u1;
             raw_l1  <= S_rgb_tlast;   raw_l2  <= raw_l1;
@@ -1478,7 +1443,8 @@ awb #(
                 sel_last  = raw_l2;
             end
             2'd3: begin
-                sel_data  = pop_d2;
+                // POP 模块内部 1 拍流水 + pop_d1 = 与 raw_d2 同拍
+                sel_data  = pop_d1;
                 sel_valid = raw_v2;
                 sel_user  = raw_u2;
                 sel_last  = raw_l2;

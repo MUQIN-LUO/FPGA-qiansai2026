@@ -26,6 +26,18 @@
 //   · 合并：keep 取较小根号；drop 的 bbox/格数/弦长/行数并入 keep；
 //     被合并标签当前行的行跨度按原版不并入（其槽位随后失效）。
 //   · 溢出：标签耗尽时丢弃该游程并置 O_ovf=1（帧内累积），不静默。
+// --------------------------------------------------------------------------
+// [颜色一致性]（本轮新增，COLOR_AWARE=1）
+//   目标：把"相互接触但颜色不同"的两个物体分到不同连通域。
+//   · 输入 I_rgb 是该格 4 像素平均色（5:5:5）。
+//   · 颜色跳变格处理：当整格命中且其颜色与上一整格颜色差 >= COLOR_TH 时，
+//     把这一格当作"空拍"（cell_v=0）。这样游程在该格自然关闭，下一格以新
+//     颜色另起游程。**不新增关闭事件类型**，因此原来"关闭事件间隔 >=2 拍"
+//     的 A/B 两级流水不变量继续成立。
+//   · 跨行合并：只允许颜色相近的标签合并（l_col 为该标签的代表色）。
+//   · 代表色用 (3*old+new)>>2 慢速跟踪，兼顾光照渐变与颜色区分。
+//   · 整格命中（I_hit==4'hF）才参与颜色判决，边缘混合格不投票。
+//   · 所有颜色逻辑都在 25 MHz CCL 域，不增加 103.52 MHz 像素通路的负担。
 // ==========================================================================
 module isp_ccl_circle #(
     parameter integer IMG_WIDTH  = 1280,
@@ -34,13 +46,19 @@ module isp_ccl_circle #(
     parameter [11:0]  MAX_W_PX   = 12'd720,
     parameter [23:0]  MIN_CELLS  = 24'd8,
     parameter [11:0]  ROW_NUM    = 12'd9,
-    parameter [11:0]  ROW_DEN    = 12'd10
+    parameter [11:0]  ROW_DEN    = 12'd10,
+    // ---- 颜色一致性 ----
+    parameter        COLOR_AWARE = 1'b1,
+    // 5:5:5 三通道绝对差之和门限。肤色 vs 绿色约 31（5bit 域），
+    // 同一物体内光照渐变一般 < 10；取 12 兼顾区分度与抗渐变。
+    parameter [6:0]  COLOR_TH    = 7'd12
 )(
     input  wire        I_clk,
     input  wire        I_rst_n,
     input  wire        I_clr,
     input  wire        I_valid,
     input  wire [3:0]  I_hit,
+    input  wire [14:0] I_rgb,        // 该格 4 像素平均色 5:5:5
     input  wire [11:0] I_x,
     input  wire [11:0] I_y,
     output reg         O_evt,
@@ -76,6 +94,9 @@ module isp_ccl_circle #(
     reg [10:0] l_rows [1:NB];
     reg [8:0]  l_rmnx [1:NB], l_rmxx [1:NB];
     reg        l_has  [1:NB];
+    // 标签代表色（5:5:5）与有效位；仅 COLOR_AWARE=1 时参与合并判决
+    reg [14:0] l_col  [1:NB];
+    reg        l_col_v[1:NB];
 
     // ---------------- 游程表 ----------------
     reg [8:0]  pr_s [0:7], pr_e [0:7];
@@ -88,6 +109,8 @@ module isp_ccl_circle #(
     reg        in_run;
     reg [8:0]  run_s;
     reg [3:0]  run_l, run_l2;
+    reg [14:0] run_col;          // 当前游程的代表色（首个整格）
+    reg        run_col_v;
 
     reg        S_ev_fin;
     reg        S_rowpend;   // 行尾结算推迟一拍（行尾同时有关闭时）
@@ -100,6 +123,78 @@ module isp_ccl_circle #(
             find_lab = (l == 4'd0) ? 4'd0 : ((par[l] == 4'd0) ? l : par[l]);
         end
     endfunction
+
+    // ---- 颜色一致性 ----
+    // 5:5:5 三通道绝对差之和（最大 93，7 位）
+    function [6:0] cdist5;
+        input [14:0] a;
+        input [14:0] b;
+        reg [4:0] dr, dg, db;
+        begin
+            dr = (a[14:10] >= b[14:10]) ? (a[14:10] - b[14:10]) : (b[14:10] - a[14:10]);
+            dg = (a[9:5]   >= b[9:5])   ? (a[9:5]   - b[9:5])   : (b[9:5]   - a[9:5]);
+            db = (a[4:0]   >= b[4:0])   ? (a[4:0]   - b[4:0])   : (b[4:0]   - a[4:0]);
+            cdist5 = {2'd0, dr} + {2'd0, dg} + {2'd0, db};
+        end
+    endfunction
+
+    // 候选标签 l 是否与参考色 c 足够接近（无法判定时一律接受，避免过度分割）
+    function col_ok;
+        input [3:0]  l;
+        input [14:0] c;
+        input        cv;
+        begin
+            if (!COLOR_AWARE || !cv || (l == 4'd0) || !l_col_v[l])
+                col_ok = 1'b1;
+            else
+                col_ok = (cdist5(c, l_col[l]) < COLOR_TH);
+        end
+    endfunction
+
+    // 每通道 (3*old+new)>>2，慢速跟踪光照/渐变。
+    // 注意：必须用 7 位中间和。若直接写成 (old+old+old+new)>>2，
+    // Verilog 会按操作数位宽（5 位）回绕：3*22+22=88 -> 24 -> 6，
+    // 代表色被打偏后所有跨行合并都会被误拒（实测标签溢出）。
+    function [4:0] ema5;
+        input [4:0] old;
+        input [4:0] new;
+        reg   [6:0] sum;
+        begin
+            sum  = {2'b0, old} + {2'b0, old} + {2'b0, old} + {2'b0, new};
+            ema5 = sum[6:2];
+        end
+    endfunction
+
+    // ---- 颜色跳变格：整格命中且与上一整格颜色差超限 ----
+    reg  [14:0] S_prev_col;      // 上一个"整格命中"的颜色
+    reg         S_prev_v;
+    wire        cell_full = (&I_hit);
+    // 颜色跳变判据（双条件，跨过单个混合格）：
+    //   · 与"当前游程代表色"差 >= COLOR_TH：累计色差已经明显；
+    //   · 与"上一整格"差 >= COLOR_TH/2：变化是突变的，不是光照渐变。
+    // 只用一个相邻格判据时，若边界恰好是 50/50 混合整格，单步差会小于阈值，
+    // 红球+肤手会被桥接成一个域（实测）。只用累计判据又会把球面渐变切成多片。
+    localparam [6:0] COLOR_LOCAL = (COLOR_TH >> 1);
+    wire        col_split = COLOR_AWARE && in_run && cell_full && run_col_v &&
+                            (I_x != 12'd0) &&
+                            (cdist5(I_rgb, run_col) >= COLOR_TH) &&
+                            (!S_prev_v || (cdist5(I_rgb, S_prev_col) >= COLOR_LOCAL));
+
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_prev_col <= 15'd0;
+            S_prev_v   <= 1'b0;
+        end
+        else if (I_clr) begin
+            S_prev_col <= 15'd0;
+            S_prev_v   <= 1'b0;
+        end
+        else if (I_valid && cell_full) begin
+            // 跳变格本身也更新参考色：下一格与它同色时不再判跳变
+            S_prev_col <= I_rgb;
+            S_prev_v   <= 1'b1;
+        end
+    end
 
     reg [3:0] free_lab;
     always @(*) begin
@@ -117,7 +212,9 @@ module isp_ccl_circle #(
 
     // ---------------- 当前拍 ----------------
     wire [8:0] cx     = I_x[10:2];
-    wire       cell_v   = |I_hit;
+    // 颜色跳变格按"空拍"处理：游程在此自然关闭，下一格以新颜色另起游程。
+    // 这样不新增关闭事件类型，保持 A/B 两级流水的 >=2 拍间隔不变量。
+    wire       cell_v   = |I_hit && ~col_split;
     wire       last_c = (I_x >= (IMG_WIDTH  - 4));
     wire       last_r = (I_y >= (IMG_HEIGHT - 1));
 
@@ -174,17 +271,32 @@ module isp_ccl_circle #(
     wire [3:0]  run_l_eff  = in_run ? run_l  : ov1_cur;
     wire [3:0]  run_l2_eff = in_run ? run_l2 : ov2_cur;
 
-    wire [3:0]  pick_raw = (run_l_eff  != 4'd0) ? run_l_eff  :
-                           (run_l2_eff != 4'd0) ? run_l2_eff :
-                           (ov1_sel != 4'd0) ? ov1_sel :
-                           (ov2_sel != 4'd0) ? ov2_sel : free_lab_q;
+    // 颜色一致性：只允许与本游程代表色相近的标签参与合并。
+    //   ref_col/ref_v 取游程代表色；游程没有整格时（ref_v=0）不做颜色限制。
+    wire [14:0] ref_col  = in_run ? run_col : I_rgb;
+    wire        ref_v    = in_run ? run_col_v : cell_full;
+    wire [3:0]  run_l_f  = col_ok(run_l_eff,  ref_col, ref_v) ? run_l_eff  : 4'd0;
+    wire [3:0]  run_l2_f = col_ok(run_l2_eff, ref_col, ref_v) ? run_l2_eff : 4'd0;
+    wire [3:0]  ov1_f    = col_ok(ov1_sel,    ref_col, ref_v) ? ov1_sel    : 4'd0;
+    wire [3:0]  ov2_f    = col_ok(ov2_sel,    ref_col, ref_v) ? ov2_sel    : 4'd0;
+
+    wire [3:0]  pick_raw = (run_l_f  != 4'd0) ? run_l_f  :
+                           (run_l2_f != 4'd0) ? run_l2_f :
+                           (ov1_f != 4'd0) ? ov1_f :
+                           (ov2_f != 4'd0) ? ov2_f : free_lab_q;
     wire [3:0]  L_sel    = (pick_raw == 4'd0) ? 4'd0 :
                            ((par[pick_raw] == 4'd0) ? pick_raw : par[pick_raw]);
 
-    wire [3:0]  other_raw = (run_l2_eff != 4'd0 && find_lab(run_l2_eff) != L_sel) ? run_l2_eff :
-                            (ov2_sel != 4'd0 && find_lab(ov2_sel) != L_sel) ? ov2_sel : 4'd0;
-    wire [3:0]  M_sel     = (other_raw == 4'd0) ? 4'd0 :
-                            ((par[other_raw] == 4'd0) ? other_raw : par[other_raw]);
+    wire [3:0]  other_raw = (run_l2_f != 4'd0 && find_lab(run_l2_f) != L_sel) ? run_l2_f :
+                            (ov2_f    != 4'd0 && find_lab(ov2_f)    != L_sel) ? ov2_f    : 4'd0;
+    // 保守合并：一次边界混合游程可能同时"接近"两个不同颜色的标签。
+    // 若直接 keep/drop，会把两个异色标签桥接成一个（实测红球吞掉肤色小手）。
+    // 因此额外要求两个被合并标签的代表色彼此相近；否则只保留主标签，另一个独立成域。
+    wire [3:0]  M_root    = find_lab(other_raw);
+    wire        pair_ok   = (other_raw == 4'd0) || (M_root == 4'd0) ||
+                            !l_col_v[L_sel] || !l_col_v[M_root] ||
+                            (cdist5(l_col[L_sel], l_col[M_root]) < COLOR_TH);
+    wire [3:0]  M_sel     = (other_raw == 4'd0 || !pair_ok) ? 4'd0 : M_root;
 
     wire [3:0]  keep = (M_sel != 4'd0 && M_sel < L_sel) ? M_sel : L_sel;
     wire [3:0]  drop = (M_sel != 4'd0 && M_sel < L_sel) ? L_sel :
@@ -196,6 +308,8 @@ module isp_ccl_circle #(
     reg [8:0]  P_run_s, P_close_e;
     reg [9:0]  P_y;
     reg        P_last_c;
+    reg [14:0] P_col;
+    reg        P_col_v;
 
     wire [3:0]  P_drop_s = (P_drop == 4'd0) ? P_keep : P_drop;
     wire [8:0]  b_minx = (P_drop != 4'd0 && l_minx[P_drop_s] < l_minx[P_keep]) ? l_minx[P_drop_s] : l_minx[P_keep];
@@ -242,13 +356,17 @@ module isp_ccl_circle #(
                 l_rows[i]  <= 11'd0;
                 l_rmnx[i]  <= 9'h1ff; l_rmxx[i] <= 9'd0;
                 l_has[i]   <= 1'b0;
+                l_col[i]   <= 15'd0;
+                l_col_v[i] <= 1'b0;
             end
             par[0] <= 4'd0;
             pr_n <= 4'd0; cr_n <= 4'd0;
             in_run <= 1'b0; run_s <= 9'd0; run_l <= 4'd0; run_l2 <= 4'd0;
+            run_col <= 15'd0; run_col_v <= 1'b0;
             P_valid <= 1'b0; P_keep <= 4'd1; P_drop <= 4'd0;
             S_rowpend <= 1'b0;
             P_run_s <= 9'd0; P_close_e <= 9'd0; P_y <= 10'd0; P_last_c <= 1'b0;
+            P_col <= 15'd0; P_col_v <= 1'b0;
             S_rowpend <= 1'b0;
             O_ovf  <= 1'b0;
         end
@@ -262,11 +380,14 @@ module isp_ccl_circle #(
                 l_rows[i]  <= 11'd0;
                 l_rmnx[i]  <= 9'h1ff; l_rmxx[i] <= 9'd0;
                 l_has[i]   <= 1'b0;
+                l_col[i]   <= 15'd0;
+                l_col_v[i] <= 1'b0;
             end
             par[0] <= 4'd0;
             pr_n <= 4'd0; cr_n <= 4'd0;
             in_run <= 1'b0; run_s <= 9'd0; run_l <= 4'd0; run_l2 <= 4'd0;
-            P_valid <= 1'b0;
+            run_col <= 15'd0; run_col_v <= 1'b0;
+            P_valid <= 1'b0; P_col_v <= 1'b0;
             S_rowpend <= 1'b0;
             O_ovf  <= 1'b0;
         end
@@ -280,11 +401,14 @@ module isp_ccl_circle #(
                 l_rows[i]  <= 11'd0;
                 l_rmnx[i]  <= 9'h1ff; l_rmxx[i] <= 9'd0;
                 l_has[i]   <= 1'b0;
+                l_col[i]   <= 15'd0;
+                l_col_v[i] <= 1'b0;
             end
             par[0] <= 4'd0;
             pr_n <= 4'd0; cr_n <= 4'd0;
             in_run <= 1'b0; run_s <= 9'd0; run_l <= 4'd0; run_l2 <= 4'd0;
-            P_valid <= 1'b0;
+            run_col <= 15'd0; run_col_v <= 1'b0;
+            P_valid <= 1'b0; P_col_v <= 1'b0;
             S_rowpend <= 1'b0;
             O_ovf <= 1'b0;
             for (i = 0; i < 8; i = i + 1) begin
@@ -306,6 +430,21 @@ module isp_ccl_circle #(
                 l_rmnx[P_keep] <= b_rmnx;
                 l_rmxx[P_keep] <= b_rmxx;
                 l_has[P_keep]  <= b_has2;
+                // 代表色：新标签直接采用；已有标签只在"本次合并色与标签色足够近"
+                // 时慢速跟踪（抗光照渐变）。若一次边界混合色误合并也去更新，
+                // 标签色会被逐步拉向相邻物体（实测红球会因此吞掉小手），
+                // 所以用 COLOR_TH/2 作为更新门，异常合并不污染代表色。
+                if (P_col_v) begin
+                    if (!l_col_v[P_keep]) begin
+                        l_col[P_keep]   <= P_col;
+                        l_col_v[P_keep] <= 1'b1;
+                    end
+                    else if (cdist5(P_col, l_col[P_keep]) < COLOR_LOCAL) begin
+                        l_col[P_keep] <= { ema5(l_col[P_keep][14:10], P_col[14:10]),
+                                           ema5(l_col[P_keep][9:5],   P_col[9:5]),
+                                           ema5(l_col[P_keep][4:0],   P_col[4:0]) };
+                    end
+                end
             end
 
             // 行尾结算推迟：行尾这一拍同时有关闭时，下一拍再结算其余标签
@@ -328,8 +467,26 @@ module isp_ccl_circle #(
                         run_s  <= cx;
                         run_l  <= ov1_cur;
                         run_l2 <= ov2_cur;
+                        run_col   <= I_rgb;
+                        run_col_v <= cell_full;
                     end
                     else begin
+                        // 代表色：首个整格先取源色，之后按 1/4 EMA 跟随本游程。
+                        // 只取"首个整格"会把靠近球/手边界的一个红肤混合色当成
+                        // 手的代表色（与红球距离可能 < 阈值），使小手被并进红球；
+                        // 长游程 EMA 会收敛到纯肤色。颜色跳变判据仍用更新前的
+                        // run_col，因此不会削弱边界检测。
+                        if (cell_full) begin
+                            if (!run_col_v) begin
+                                run_col   <= I_rgb;
+                                run_col_v <= 1'b1;
+                            end
+                            else begin
+                                run_col <= { ema5(run_col[14:10], I_rgb[14:10]),
+                                             ema5(run_col[9:5],   I_rgb[9:5]),
+                                             ema5(run_col[4:0],   I_rgb[4:0]) };
+                            end
+                        end
                         if ((ov1_cur != 4'd0) && (run_l == 4'd0))
                             run_l <= ov1_cur;
                         else if ((ov1_cur != 4'd0) && (find_lab(ov1_cur) != find_lab(run_l)) && (run_l2 == 4'd0))
@@ -358,6 +515,8 @@ module isp_ccl_circle #(
                     P_close_e <= close_e;
                     P_y       <= I_y[9:0];
                     P_last_c  <= last_c;
+                    P_col     <= run_col;
+                    P_col_v   <= run_col_v;
 
                     if (cr_n < 4'd8) begin
                         cr_s[cr_n] <= run_s_eff;
@@ -368,9 +527,10 @@ module isp_ccl_circle #(
                 end
 
                 if (closing) begin
-                    in_run <= 1'b0;
-                    run_l  <= 4'd0;
-                    run_l2 <= 4'd0;
+                    in_run    <= 1'b0;
+                    run_l     <= 4'd0;
+                    run_l2    <= 4'd0;
+                    run_col_v <= 1'b0;
                 end
 
                 // ---- 3. 行尾：结算本行跨度，游程表换行 ----

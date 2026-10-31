@@ -2,15 +2,15 @@
 // 颜色无关的圆形检测前端（替代按颜色取候选的做法）
 // --------------------------------------------------------------------------
 // 设计要点（对应赛题改造需求 1）：
-//   1) 候选区域生成【不经过任何颜色阈值】。前景掩膜由两路"与颜色无关"的
-//      判据取并集：
-//        · 色度  chroma = max(R,G,B) - min(R,G,B) >= CHROMA_TH
-//          只判"这个像素有彩色"，不区分红/黄/蓝/绿，任何一种饱和色都能进
-//          候选，因此不再需要红、黄两套阈值。
+//   1) 候选区域生成【不经过任何目标颜色阈值】。前景掩膜由两路判据取并集：
+//        · 背景色差  |R-Rbg|+|G-Gbg|+|B-Bbg| >= BG_TH
+//          Rbg/Gbg/Bbg 为画面四周环带的帧级均值。判的是"与背景不同"，
+//          与目标本身是什么颜色无关。旧版用绝对色度，彩底会整帧成前景。
 //        · 亮度梯度  Sobel(|gx|+|gy|) >= EDGE_TH （直接复用 edge_detect_96）
-//          用来覆盖灰、白、黑这类"没有色度"的圆：只要与背景有明暗台阶，
-//          边缘就会进入前景。
-//      两路都是尺度无关的量，与具体色相无关。
+//          用来覆盖灰、白、黑这类与背景亮度差不足的圆：只要与背景有明暗
+//          台阶，边缘就会进入前景。
+//      两路都是尺度无关的量，与具体色相无关。目标的颜色只用于 CCL 的
+//      "同色才合并"判据（见 isp_ccl_circle.v 的 COLOR_AWARE）。
 //   2) 圆形判据落在【轮廓特征】上，不是宽高比：
 //        · 主判据 chord_ratio = Σ(每行最左到最右前景像素的跨度) / (w*h)
 //            完整圆      ≈ π/4 ≈ 0.785
@@ -24,12 +24,30 @@
 // ==========================================================================
 
 // --------------------------------------------------------------------------
-// 前景掩膜：色度 ∪ 亮度梯度
+// 前景掩膜：背景色差 ∪ 亮度梯度（本轮改为背景自适应）
+// --------------------------------------------------------------------------
+// 为什么不再用"绝对色度"：
+//   旧判据 foreground = (max(R,G,B)-min(R,G,B) >= 20) ∪ (梯度 >= 48)。
+//   只要背景本身有颜色（蓝布、木桌、草地），色度就远超门限，整片背景都成
+//   前景 -> 前景铺满画面 -> 外接框接近满幅 -> 圆形判据必然失败。
+//
+// 新判据：
+//   foreground = ( |R-Rbg| + |G-Gbg| + |B-Bbg| >= BG_TH ) ∪ (亮度梯度 >= EDGE_TH)
+//   Rbg/Gbg/Bbg 来自帧级背景估计（画面四周环带的慢速均值）。
+//   只要目标颜色与**背景**不同就能分离，与目标本身是什么颜色无关。
+//
+// 颜色一致性 CCL 还需要"这一拍 4 个像素是什么颜色"：
+//   O_rgb = 4 像素平均值量化到 5:5:5，与 O_mask 同拍。
+//   只用它做连通域的同色合并判据，不参与前景判定。
+//
+// 两级流水（避免把 3 减法 + 3 取绝对值 + 2 加法 + 比较压在 103 MHz 一拍里）：
+//   S1: 每像素算三通道绝对差之和、并寄存 5:5:5 颜色
+//   S2: 与 BG_TH 比较、并与 Sobel 边缘掩膜取并
 // --------------------------------------------------------------------------
 module isp_fg_mask #(
     parameter integer IMG_WIDTH  = 1280,
     parameter integer IMG_HEIGHT = 720,
-    parameter [7:0]   CHROMA_TH  = 8'd20
+    parameter [9:0]   BG_TH      = 10'd60      // 三通道绝对差之和门限
 )(
     input  wire        I_clk,
     input  wire        I_rst_n,
@@ -38,6 +56,10 @@ module isp_fg_mask #(
     input  wire        I_tlast,
     input  wire        I_tuser,
     input  wire [95:0] I_tdata,
+    // 帧级背景色（isp_bg_est）
+    input  wire [7:0]  I_bg_r,
+    input  wire [7:0]  I_bg_g,
+    input  wire [7:0]  I_bg_b,
     // edge_detect_96 的输出（比 I_* 晚 1 拍）
     input  wire        I_edge_valid,
     input  wire        I_edge_tlast,
@@ -45,6 +67,8 @@ module isp_fg_mask #(
     input  wire [95:0] I_edge_tdata,
     // 前景掩膜（与 I_edge_* 同拍）。bit0 对应最左像素。
     output wire [3:0]  O_mask,
+    // 该拍 4 像素平均色 5:5:5（与 O_mask 同拍），供 CCL 做颜色一致性
+    output wire [14:0] O_rgb,
     output wire        O_valid,
     output wire        O_tlast,
     output wire        O_tuser,
@@ -52,67 +76,198 @@ module isp_fg_mask #(
     output wire [11:0] O_y
 );
 
-    // 色度 = max(R,G,B) - min(R,G,B)。纯组合，8 位。
-    function [7:0] chroma_of;
+    function [9:0] cdist;
         input [23:0] p;
-        reg [7:0] mx, mn;
+        input [7:0]  br, bgc, bb;
+        reg   [7:0]  dr, dg, db;
         begin
-            mx = (p[23:16] > p[15:8]) ? p[23:16] : p[15:8];
-            mx = (mx > p[7:0]) ? mx : p[7:0];
-            mn = (p[23:16] < p[15:8]) ? p[23:16] : p[15:8];
-            mn = (mn < p[7:0]) ? mn : p[7:0];
-            chroma_of = mx - mn;
+            dr = (p[23:16] >= br)  ? (p[23:16] - br)  : (br - p[23:16]);
+            dg = (p[15:8]  >= bgc) ? (p[15:8]  - bgc) : (bgc - p[15:8]);
+            db = (p[7:0]   >= bb)  ? (p[7:0]   - bb)  : (bb - p[7:0]);
+            cdist = {2'd0, dr} + {2'd0, dg} + {2'd0, db};
         end
     endfunction
 
-    // 每拍 4 像素；[95:72] 是最左（x+0），[23:0] 是最右（x+3）
-    wire [7:0] c0 = chroma_of(I_tdata[95:72]);
-    wire [7:0] c1 = chroma_of(I_tdata[71:48]);
-    wire [7:0] c2 = chroma_of(I_tdata[47:24]);
-    wire [7:0] c3 = chroma_of(I_tdata[23:0]);
+    wire [9:0] d0 = cdist(I_tdata[95:72], I_bg_r, I_bg_g, I_bg_b);
+    wire [9:0] d1 = cdist(I_tdata[71:48], I_bg_r, I_bg_g, I_bg_b);
+    wire [9:0] d2 = cdist(I_tdata[47:24], I_bg_r, I_bg_g, I_bg_b);
+    wire [9:0] d3 = cdist(I_tdata[23:0],  I_bg_r, I_bg_g, I_bg_b);
 
-    wire [3:0] S_chroma_hit = { (c3 >= CHROMA_TH), (c2 >= CHROMA_TH),
-                                (c1 >= CHROMA_TH), (c0 >= CHROMA_TH) };
+    // 4 像素平均色（sum/4/8 = sum>>5），与掩膜同拍寄存
+    wire [9:0] S_sum_r = I_tdata[95:88] + I_tdata[71:64] + I_tdata[47:40] + I_tdata[23:16];
+    wire [9:0] S_sum_g = I_tdata[87:80] + I_tdata[63:56] + I_tdata[39:32] + I_tdata[15:8];
+    wire [9:0] S_sum_b = I_tdata[79:72] + I_tdata[55:48] + I_tdata[31:24] + I_tdata[7:0];
 
-    // 亮度梯度掩膜：edge_detect_96 输出 0xFFFFFF / 0x000000
-    wire [3:0] S_grad_hit = { |I_edge_tdata[23:0],   |I_edge_tdata[47:24],
-                              |I_edge_tdata[71:48],  |I_edge_tdata[95:72] };
-
-    reg  [3:0]  S_chroma_q;
-    reg  [11:0] S_xq, S_yq;
-    reg  [11:0] S_xc, S_yc;
+    reg [3:0]  S1_hit;
+    reg [14:0] S1_rgb;
+    reg [11:0] S1_x, S1_y;
+    reg [11:0] S1_xc, S1_yc;
 
     always @(posedge I_clk or negedge I_rst_n) begin
         if (!I_rst_n) begin
-            S_chroma_q <= 4'd0;
-            S_xq <= 12'd0; S_yq <= 12'd0;
-            S_xc <= 12'd0; S_yc <= 12'd0;
+            S1_hit <= 4'd0;
+            S1_rgb <= 15'd0;
+            S1_x  <= 12'd0; S1_y  <= 12'd0;
+            S1_xc <= 12'd0; S1_yc <= 12'd0;
         end
         else if (I_tvalid) begin
-            // 色度打一拍，正好与 edge_detect_96 的寄存输出对齐
-            S_chroma_q <= S_chroma_hit;
-            S_xq <= S_xc;
-            S_yq <= S_yc;
+            S1_hit <= { (d3 >= BG_TH), (d2 >= BG_TH),
+                        (d1 >= BG_TH), (d0 >= BG_TH) };
+            S1_rgb <= { S_sum_r[9:5], S_sum_g[9:5], S_sum_b[9:5] };
             if (I_tuser) begin
-                S_xc <= 12'd4;
-                S_yc <= 12'd0;
-            end
-            else if (S_xc >= (IMG_WIDTH - 4)) begin
-                S_xc <= 12'd0;
-                S_yc <= (S_yc >= (IMG_HEIGHT - 1)) ? 12'd0 : S_yc + 12'd1;
+                S1_x  <= 12'd0;
+                S1_y  <= 12'd0;
+                S1_xc <= 12'd4;
+                S1_yc <= 12'd0;
             end
             else begin
-                S_xc <= S_xc + 12'd4;
+                S1_x <= S1_xc;
+                S1_y <= S1_yc;
+                if (S1_xc >= (IMG_WIDTH - 4)) begin
+                    S1_xc <= 12'd0;
+                    S1_yc <= (S1_yc >= (IMG_HEIGHT - 1)) ? 12'd0 : S1_yc + 12'd1;
+                end
+                else begin
+                    S1_xc <= S1_xc + 12'd4;
+                end
             end
         end
     end
 
-    assign O_mask  = S_chroma_q | S_grad_hit;
+    wire [3:0] S_grad_hit = { |I_edge_tdata[23:0],   |I_edge_tdata[47:24],
+                              |I_edge_tdata[71:48],  |I_edge_tdata[95:72] };
+
+    assign O_mask  = S1_hit | S_grad_hit;
+    assign O_rgb   = S1_rgb;
     assign O_valid = I_edge_valid;
     assign O_tlast = I_edge_tlast;
     assign O_tuser = I_edge_tuser;
-    assign O_x     = S_xq;
-    assign O_y     = S_yq;
+    assign O_x     = S1_x;
+    assign O_y     = S1_y;
+
+endmodule
+
+
+// ==========================================================================
+// 背景色估计：画面四周环带像素的平均色，帧级更新
+// --------------------------------------------------------------------------
+// 环带像素数 NB_PIX = 2*W*BORDER + 2*(H-2*BORDER)*BORDER
+//   1280x720、BORDER=8 -> 31744，取 2^15 = 32768 作除数，偏大 3.2%，
+//   对"背景色"这种只需要粗略值的场合完全够用；AVG_SHIFT 可调。
+// ==========================================================================
+module isp_bg_est #(
+    parameter integer IMG_WIDTH  = 1280,
+    parameter integer IMG_HEIGHT = 720,
+    parameter [11:0]  BORDER     = 12'd8,
+    parameter integer AVG_SHIFT  = 15         // 2^15 = 32768 ≈ 环带像素数
+)(
+    input  wire        I_clk,
+    input  wire        I_rst_n,
+    input  wire        I_tvalid,
+    input  wire        I_tuser,
+    input  wire [95:0] I_tdata,
+    output reg  [7:0]  O_bg_r,
+    output reg  [7:0]  O_bg_g,
+    output reg  [7:0]  O_bg_b
+);
+
+    reg [11:0] cx, cy;
+    wire [11:0] cx_n = (cx >= (IMG_WIDTH - 4)) ? 12'd0 : cx + 12'd4;
+    wire [11:0] cy_n = (cy >= (IMG_HEIGHT - 1)) ? 12'd0 : cy + 12'd1;
+
+    wire S_frm_end = I_tvalid && (cx >= (IMG_WIDTH - 4)) && (cy >= (IMG_HEIGHT - 1));
+
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            cx <= 12'd0;
+            cy <= 12'd0;
+        end
+        else if (I_tvalid) begin
+            if (I_tuser) begin
+                cx <= 12'd4;
+                cy <= 12'd0;
+            end
+            else begin
+                cx <= cx_n;
+                cy <= (cx >= (IMG_WIDTH - 4)) ? cy_n : cy;
+            end
+        end
+    end
+
+    // 外圈环带
+    wire S_border = (cy < BORDER) || (cy >= (IMG_HEIGHT - BORDER)) ||
+                    (cx < BORDER) || (cx >= (IMG_WIDTH - BORDER));
+
+    wire [9:0] S_sum_r = I_tdata[95:88] + I_tdata[71:64] + I_tdata[47:40] + I_tdata[23:16];
+    wire [9:0] S_sum_g = I_tdata[87:80] + I_tdata[63:56] + I_tdata[39:32] + I_tdata[15:8];
+    wire [9:0] S_sum_b = I_tdata[79:72] + I_tdata[55:48] + I_tdata[31:24] + I_tdata[7:0];
+
+    reg [27:0] S_acc_r, S_acc_g, S_acc_b;
+    reg        S_first;            // 首帧直接采用均值，之后慢速跟踪
+
+    wire [7:0] S_mean_r = (S_acc_r >> AVG_SHIFT > 28'd255) ? 8'd255 : (S_acc_r >> AVG_SHIFT);
+    wire [7:0] S_mean_g = (S_acc_g >> AVG_SHIFT > 28'd255) ? 8'd255 : (S_acc_g >> AVG_SHIFT);
+    wire [7:0] S_mean_b = (S_acc_b >> AVG_SHIFT > 28'd255) ? 8'd255 : (S_acc_b >> AVG_SHIFT);
+
+    // 慢速平滑：向新均值靠 1/4，避免目标扫过边缘时背景跳变
+    function [7:0] iir4;
+        input [7:0] old;
+        input [7:0] tgt;
+        begin
+            iir4 = (tgt > old) ? (old + ((tgt - old) >> 2))
+                               : (old - ((old - tgt) >> 2));
+        end
+    endfunction
+
+    // 场景切换时用"半步"加速收敛，稳态仍走 1/4 慢跟踪：
+    //   |Δ| <= 32（光照/目标扫过边缘）保持慢速；
+    //   |Δ| >  32（换背景）走半步，3 帧内收敛，避免换场景后长时间误判。
+    //   例：灰(110,110,110) -> 蓝(40,80,160)，逐帧误差 150 -> 75 -> 37 < BG_TH(60)。
+    function [7:0] track_bg;
+        input [7:0] old;
+        input [7:0] tgt;
+        reg [7:0] d;
+        reg [8:0] mid;
+        begin
+            d   = (tgt > old) ? (tgt - old) : (old - tgt);
+            mid = ({1'b0, old} + {1'b0, tgt}) >> 1;
+            track_bg = (d > 8'd32) ? mid[7:0] : iir4(old, tgt);
+        end
+    endfunction
+
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_acc_r <= 28'd0;
+            S_acc_g <= 28'd0;
+            S_acc_b <= 28'd0;
+            O_bg_r  <= 8'd128;
+            O_bg_g  <= 8'd128;
+            O_bg_b  <= 8'd128;
+            S_first <= 1'b0;
+        end
+        else if (S_frm_end) begin
+            S_acc_r <= 28'd0;
+            S_acc_g <= 28'd0;
+            S_acc_b <= 28'd0;
+            if (!S_first) begin
+                // 首帧直接采用环带均值（上电默认灰只是占位）
+                O_bg_r  <= S_mean_r;
+                O_bg_g  <= S_mean_g;
+                O_bg_b  <= S_mean_b;
+                S_first <= 1'b1;
+            end
+            else begin
+                O_bg_r  <= track_bg(O_bg_r, S_mean_r);
+                O_bg_g  <= track_bg(O_bg_g, S_mean_g);
+                O_bg_b  <= track_bg(O_bg_b, S_mean_b);
+            end
+        end
+        else if (I_tvalid && S_border) begin
+            S_acc_r <= S_acc_r + {18'd0, S_sum_r};
+            S_acc_g <= S_acc_g + {18'd0, S_sum_g};
+            S_acc_b <= S_acc_b + {18'd0, S_sum_b};
+        end
+    end
 
 endmodule
 

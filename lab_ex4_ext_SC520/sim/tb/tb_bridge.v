@@ -15,6 +15,7 @@ module tb_bridge;
     reg        rst_n = 0;
     reg        fg_valid = 0;
     reg [3:0]  fg_mask  = 0;
+    reg [14:0] fg_rgb   = 0;      // 统一颜色：关闭颜色一致性，保持几何回归语义
     reg        fg_tuser = 0;
     reg        fg_tlast = 0;
     reg        det_mask = 0;
@@ -34,7 +35,7 @@ module tb_bridge;
         .MIN_CELLS (12'd8)
     ) dut (
         .I_mipi_clk(mipi_clk), .I_rst_n(rst_n),
-        .I_fg_valid(fg_valid), .I_fg_mask(fg_mask),
+        .I_fg_valid(fg_valid), .I_fg_mask(fg_mask), .I_fg_rgb(fg_rgb),
         .I_fg_tuser(fg_tuser), .I_fg_tlast(fg_tlast),
         .I_det_mask(det_mask), .I_ccl_clk(ccl_clk),
         .O_evt(o_evt), .O_w(o_w), .O_h(o_h), .O_cnt(o_cnt), .O_chord(o_chord),

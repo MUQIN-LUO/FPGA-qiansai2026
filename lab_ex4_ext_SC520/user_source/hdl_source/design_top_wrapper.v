@@ -1,5 +1,43 @@
 
 
+// ==========================================================================
+// K1 标定电平跨时钟：I_sys_clk 域 -> CSI 域
+// --------------------------------------------------------------------------
+// S_cal_tgl 由 50 MHz 域的 1.5 s 长按计数器翻转。isp_top 工作在 CSI 域，
+// 其 I_cal_mode 必须使用本模块同步后的 O_mode，**不能直接接 S_cal_tgl**。
+// O_mode 与 O_trig 同域同拍：
+//   O_mode = t2（两级同步后的电平）
+//   O_trig = t2 ^ t3（电平变化的单拍脉冲）
+// 因此上升沿同一拍满足 (O_mode=1, O_trig=1) -> CAL 启动；
+// 下降沿同一拍满足 (O_mode=0, O_trig=1) -> CAL 中止并回到自动。
+// 复位：t1..t3 异步清 0；源域 S_cal_tgl 也复位为 0，上电不会产生伪触发。
+// 本模块被顶层实例化，同时被 sim/tb/tb_cal_mode_cdc.v 直接验证。
+// ==========================================================================
+module cal_mode_cdc (
+    input  wire I_csi_clk,
+    input  wire I_csi_rst_n,
+    input  wire I_cal_tgl,      // 源域电平（异步）
+    output wire O_mode,         // 同步后电平（CSI 域）
+    output wire O_trig          // 电平变化的单拍脉冲（CSI 域）
+);
+    reg t1, t2, t3;
+    always @(posedge I_csi_clk or negedge I_csi_rst_n) begin
+        if (!I_csi_rst_n) begin
+            t1 <= 1'b0;
+            t2 <= 1'b0;
+            t3 <= 1'b0;
+        end
+        else begin
+            t1 <= I_cal_tgl;
+            t2 <= t1;
+            t3 <= t2;
+        end
+    end
+    assign O_mode = t2;
+    assign O_trig = t2 ^ t3;
+endmodule
+
+
 module design_top_wrapper (
     input wire        I_sys_clk,
     input wire        I_rst_n,
@@ -146,8 +184,7 @@ module design_top_wrapper (
     reg         S_ack1, S_ack2, S_ack_tgl;
     reg  [ 9:0] S_sn_gr, S_sn_gb, S_rc_gr, S_rc_gb;
     reg  [ 7:0] S_sn_ar, S_sn_ag, S_sn_ab, S_rc_ar, S_rc_ag, S_rc_ab;
-    reg         S_cal_t1, S_cal_t2, S_cal_t3;
-    wire        S_cal_trig = S_cal_t2 ^ S_cal_t3;
+    wire        S_cal_t2, S_cal_trig;   // 由 cal_mode_cdc 在 CSI 域同步产生
 
     reg  [11:0] S_sn_minx, S_sn_maxx, S_sn_miny, S_sn_maxy;
     reg         S_sn_valid, S_sn_cand;
@@ -691,11 +728,19 @@ module design_top_wrapper (
         end
     end
 
+    // ---- K1 电平跨到 CSI 域：I_cal_mode 与 I_cal_trig 必须同源同拍 ----
+    cal_mode_cdc u_cal_mode_cdc (
+        .I_csi_clk   (S_csi_rx_clk),
+        .I_csi_rst_n (S_rst_n),
+        .I_cal_tgl   (S_cal_tgl),
+        .O_mode      (S_cal_t2),
+        .O_trig      (S_cal_trig)
+    );
+
     // ---- CSI 域：标定请求同步 + 检测结果整组快照 ----
     //   数据先稳定、再翻 tgl；接收侧见到沿时整组已稳，比逐位两拍可靠。
     always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
         if (!S_rst_n) begin
-            S_cal_t1 <= 1'b0; S_cal_t2 <= 1'b0; S_cal_t3 <= 1'b0;
             S_ft1 <= 1'b0; S_ft2 <= 1'b0; S_ft3 <= 1'b0;
             S_sn_minx <= 12'd0; S_sn_maxx <= 12'd0;
             S_sn_miny <= 12'd0; S_sn_maxy <= 12'd0;
@@ -714,9 +759,6 @@ module design_top_wrapper (
             S_sn_ar <= 8'd0;     S_sn_ag <= 8'd0;   S_sn_ab <= 8'd0;
         end
         else begin
-            S_cal_t1 <= S_cal_tgl;
-            S_cal_t2 <= S_cal_t1;
-            S_cal_t3 <= S_cal_t2;
             S_ft1 <= S_isp_frm_tgl;
             S_ft2 <= S_ft1;
             S_ft3 <= S_ft2;
@@ -1336,6 +1378,7 @@ assign S_raw_tuser  = S_axis_tuser;
 isp_top u_isp_top (
 .axi4s_video_aclk(S_csi_rx_clk),
 .I_ccl_src_clk   (I_sys_clk),
+.I_cal_mode      (S_cal_t2),   // CDC: 必须用 CSI 域已同步电平，不能用 sys 域 S_cal_tgl
 .I_rst_n         (S_rst_n),
 .I_tlast         (S_raw_tlast	),
 .I_tuser         (S_raw_tuser	),

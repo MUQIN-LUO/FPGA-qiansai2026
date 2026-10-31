@@ -28,6 +28,7 @@ module isp_ccl_bridge #(
     input  wire        I_rst_n,
     input  wire        I_fg_valid,
     input  wire [3:0]  I_fg_mask,
+    input  wire [14:0] I_fg_rgb,       // 该拍 4 像素平均色 (5:5:5)
     input  wire        I_fg_tuser,
     input  wire        I_fg_tlast,
     input  wire        I_det_mask,      // 标定屏蔽（MIPI 域电平）
@@ -70,10 +71,11 @@ module isp_ccl_bridge #(
     reg         S_mf_resync;
     wire        S_mf_drop = I_fg_valid & O_dbg_full;
     wire        S_mf_err_w = S_mf_err_pending & ~(I_fg_tuser & S_mf_resync);
-    wire [9:0]  S_mf_wdata = {S_mf_resync, S_mf_err_w,
+    // {resync, err, rgb[14:0], hit[3:0], tuser, tlast, 2'b00} = 25 bit
+    wire [24:0] S_mf_wdata = {S_mf_resync, S_mf_err_w, I_fg_rgb,
                               I_fg_mask, I_fg_tuser, I_fg_tlast, 2'b00};
     wire        S_mf_empty, S_mf_valid;
-    wire [9:0]  S_mf_rdata;
+    wire [24:0] S_mf_rdata;
     wire        S_ccl_busy;
     wire        S_ccl_rd_en;
 
@@ -92,7 +94,7 @@ module isp_ccl_bridge #(
         end
     end
 
-    isp_mask_fifo #(.AW(9)) u_mask_fifo (
+    isp_mask_fifo #(.AW(9), .DW(25)) u_mask_fifo (
         .I_wr_clk  (I_mipi_clk),
         .I_wr_rst_n(I_rst_n),
         .I_wr_en   (I_fg_valid),
@@ -115,8 +117,9 @@ module isp_ccl_bridge #(
     assign O_dbg_drop = dbg_drop_r;
 
     // ---------------- 读侧：坏帧、无丢拍恢复、帧门控 ----------------
-    wire        S_mf_resync_r = S_mf_rdata[9];
-    wire        S_mf_err      = S_mf_rdata[8];
+    wire        S_mf_resync_r = S_mf_rdata[24];
+    wire        S_mf_err      = S_mf_rdata[23];
+    wire [14:0] S_mf_rgb      = S_mf_rdata[22:8];
     wire        S_mf_tuser    = S_mf_rdata[3];
     wire        S_mf_tlast    = S_mf_rdata[2];
 
@@ -129,11 +132,11 @@ module isp_ccl_bridge #(
 
     // tuser 拍暂存一拍，下一拍以 clean 状态送入
     reg         S_hold_valid;
-    reg [9:0]   S_hold_data;
+    reg [24:0]  S_hold_data;
     always @(posedge I_ccl_clk or negedge ccl_rst_n) begin
         if (!ccl_rst_n) begin
             S_hold_valid <= 1'b0;
-            S_hold_data  <= 10'd0;
+            S_hold_data  <= 25'd0;
         end
         else begin
             S_hold_valid <= S_tuser_bad;
@@ -142,8 +145,9 @@ module isp_ccl_bridge #(
     end
 
     wire        S_ccl_in_valid = S_hold_valid | (S_mf_valid && !S_tuser_bad);
-    wire [9:0]  S_ccl_in_data  = S_hold_valid ? S_hold_data : S_mf_rdata;
+    wire [24:0] S_ccl_in_data  = S_hold_valid ? S_hold_data : S_mf_rdata;
     wire [3:0]  S_ccl_hit      = S_ccl_in_data[7:4];
+    wire [14:0] S_ccl_rgb      = S_ccl_in_data[22:8];
     wire        S_ccl_tuser    = S_ccl_in_data[3];
     wire        S_ccl_tlast    = S_ccl_in_data[2];
 
@@ -199,6 +203,7 @@ module isp_ccl_bridge #(
         .I_clr    (S_ccl_clr | S_tuser_bad),
         .I_valid  (S_ccl_in_valid),
         .I_hit    (S_ccl_hit),
+        .I_rgb    (S_ccl_rgb),
         .I_x      (S_ccl_x),
         .I_y      (S_ccl_y),
         .O_evt    (C_evt),

@@ -7,34 +7,36 @@
 //   （40 ns），吞吐 25.0 M 拍/s 仍高于有效像素流 13.824 M 拍/s；
 //   跨域只传 8 bit 掩膜事件，用标准格雷码指针 + 2FF 同步。
 //
-// 数据格式：{resync, err, hit[3:0], tuser, tlast, 2'b00}
+// 数据格式（DW=25）：{resync, err, rgb[14:0], hit[3:0], tuser, tlast, 2'b00}
 //   err=1 表示此前发生过写丢失（满），本帧结果必须整帧丢弃。
+//   rgb 为该拍 4 像素平均色（5:5:5），供 CCL 做"同色才合并"。
 //   x/y 坐标由 CCL 域的行/列计数器重建，不再跨域传递。
 //
 // 实现：深度 512（一行 320 拍 + 突发余量），同步写、寄存输出读，
 //       读写各自时钟域，指针格雷码跨域。
 // ==========================================================================
 module isp_mask_fifo #(
-    parameter integer AW = 9            // 深度 = 2^AW = 512
+    parameter integer AW = 9,           // 深度 = 2^AW = 512
+    parameter integer DW = 25           // 数据位宽（含颜色）
 )(
     // ---------------- 写侧（MIPI 域，103.52 MHz） ----------------
     input  wire        I_wr_clk,
     input  wire        I_wr_rst_n,
     input  wire        I_wr_en,
-    input  wire [9:0]  I_wr_data,
+    input  wire [DW-1:0] I_wr_data,
     output wire        O_full,
     // ---------------- 读侧（CCL 域，25.00 MHz） ----------------
     input  wire        I_rd_clk,
     input  wire        I_rd_rst_n,
     input  wire        I_rd_en,
-    output reg  [9:0]  O_rd_data,
+    output reg  [DW-1:0] O_rd_data,
     output reg         O_rd_valid,
     output wire        O_empty
 );
 
     localparam integer DEPTH = (1 << AW);
 
-    reg [9:0]  mem [0:DEPTH-1];
+    reg [DW-1:0]  mem [0:DEPTH-1];
 
     reg [AW:0] wr_bin, wr_gray;
     reg [AW:0] rd_bin, rd_gray;
@@ -89,7 +91,7 @@ module isp_mask_fifo #(
             rd_gray    <= {(AW+1){1'b0}};
             wr_gray_s1 <= {(AW+1){1'b0}};
             wr_gray_s2 <= {(AW+1){1'b0}};
-            O_rd_data  <= 10'd0;
+            O_rd_data  <= {DW{1'b0}};
             O_rd_valid <= 1'b0;
         end
         else begin

@@ -1,11 +1,6 @@
 # lab_ex4_ext_SC520 回归测试
 
-两个回归都直接实例化**工程实际使用的 RTL**，不是测试台内的手写镜像：
-
-| 测试 | 实例化的 RTL | 覆盖 |
-|---|---|---|
-| `tb/tb_bridge.v` | `isp_ccl_bridge.v` + `isp_mask_fifo.v` + `isp_ccl_circle.v` | 掩膜 FIFO 跨域、坐标重建、事件 3 级 CDC、丢拍双标志（err/resync）、tuser 暂存无丢拍恢复、`frame_open` 帧门控 |
-| `tb/tb_ccl_regression.v` | `isp_ccl_circle.v`（与 `ref/isp_ccl_circle_ref.v` 逐拍对比） | 干净圆、细遮挡、复杂背景、无球、方块、卷尺、相邻/合并圆、空心环、标签溢出、行尾合并、最后一拍关闭、跨行修复、无空拍密集流、连续帧 |
+所有 TB 都**直接实例化工程实际综合使用的 RTL**，不是测试台内手写镜像。
 
 ## 运行
 
@@ -16,21 +11,68 @@ cd lab_ex4_ext_SC520\sim
 run.bat
 ```
 
-或手动：
+日志写到 `sim/logs/`。`tb_frontend` 在 1280×720、真实行时序下约 15 分钟，
+其余测试均为秒级。
+
+## 测试清单
+
+| 测试 | 实例化的 RTL | 覆盖 |
+|---|---|---|
+| `tb/tb_pop.v` | `isp_pop96.v`（HUE_AWARE=0/1 两个实例） | 亮度 4 档、4 组调色板、套印 x-2；**色相区分矩阵**：4 调色板 × 4 亮度档 × 暖/绿/冷，检查色相方向与曼哈顿色差门限；中性色必须与 HUE_AWARE=0 完全一致 |
+| `tb/tb_awb_apply.v` | `isp_gray_world` + `isp_awb_arbiter` + `awb` + `signal_delay` | 复位 INIT、蓝/红收敛、稳定、过暗/过曝保持、MODE0 忽略 CAL、MODE1 原子生效、切回自动 |
+| `tb/tb_cal_mode_cdc.v` | `design_top_wrapper.v` 内的 `cal_mode_cdc` | K1 电平跨域：上升/下降沿同拍 trig、start/abort、单周期脉冲、稳定无伪脉冲、CSI 复位 |
+| `tb/tb_ccl_regression.v` | `isp_ccl_circle.v` vs `ref/isp_ccl_circle_ref.v` | 干净圆/遮挡/杂波/方块/卷尺/重叠/空心/溢出/跨行/密集关闭/连续帧/帧中清空，逐字段对比 |
+| `tb/tb_bridge.v` | `isp_ccl_bridge.v` + `isp_mask_fifo.v` + `isp_ccl_circle.v` | 25 bit 掩膜+颜色 FIFO、坐标重建、事件 CDC、丢拍恢复、满恰逢 tuser、恢复帧 |
+| `tb/tb_ccl_color.v` | `isp_ccl_circle.v` | 颜色一致性：异色接触分离、**同色接触仍合并**（证明不是几何硬切）、红/肤 50/50 混合格边界；颜色输入与 `isp_fg_mask.O_rgb` 一样取 4 像素平均 |
+| `tb/tb_frontend.v` | `edge_detect_96` + `isp_bg_est` + `isp_fg_mask` + `isp_ccl_bridge` | 真实前端链路：绿/红/蓝球、手持球、手指压球、蓝布/双色底、无球、方块、卷尺、过小球、**d=40/60/100 px 小球+手遮挡+复杂背景**、**FIFO 溢出注入与恢复** |
+| `tb/tb_isp_top_display.v` | 完整 `isp_top`（RAW→demosaic→AWB→显示选择）+ 行为级 PH1P 原语模型 | 显示通路诊断：真实行/帧时序、POP/RAW/GRAY/EDGE 切换、valid/tuser/tlast、POP 行首套印。**当前在行为级模型下未通过，不作为验收证据**；用 `run_isp_top_display.bat` 单独运行，需上板确认 |
+
+## 前端时序模型（重要）
+
+`tb_frontend.v` 不是“均匀插空”：
+
+- 行：320 拍有效像素**连续突发**（每 MIPI 字节时钟 1 拍），
+  随后 1979 拍行消隐；`LINE_CYCLES=2300`（22.22 µs @103.52 MHz，
+  对应 1280×720@60 的真实行周期）。
+- 帧：720 行 + 30 行场消隐 ≈ 16.67 ms。
+- 平均有效拍率 ≈ 14.4 M beat/s（真实约 13.8 M/s），
+  但突发瞬间是 103.5 M beat/s；512 深 FIFO 必须吸收一行 320 拍的突发。
+- 最后额外注入一帧“无消隐连续流”（行内 320 拍后不插空），必然触发
+  FIFO 满/丢拍；随后正常帧必须恢复检测，验证坏帧/重同步路径。
+- 每个场景先跑 `warm` 帧让背景估计收敛，再评估 1 帧；
+  `warm` 按背景是否变化配置（同底色为 0，换底色为 2）。
+
+## 顶层 CDC 接线检查（TD，不是 ModelSim）
+
+`tb_cal_mode_cdc.v` 验证同步器行为；**顶层实际接线**用 TD elaboration
+网表检查（在任意 TD run 目录下执行，该目录需有 `camera_to_dsi_display.prj`）：
+
+```bat
+"D:\Program Files\TD\bin\td_commands_prompt.exe" D:/FPGA/project/lab_ex4_ext_SC520/sim/verify_top_cdc.tcl
+```
+
+期望输出：
 
 ```
-vlib work
-vlog ..\user_source\hdl_source\isp\isp_ccl_circle.v ref\isp_ccl_circle_ref.v tb\tb_ccl_regression.v
-vsim -c tb_ccl_regression -do "run -all; quit -f"
-
-vlog ..\user_source\hdl_source\isp\isp_ccl_bridge.v ..\user_source\hdl_source\isp\isp_mask_fifo.v ..\user_source\hdl_source\isp\isp_ccl_circle.v tb\tb_bridge.v
-vsim -c tb_bridge -do "run -all; quit -f"
+CAL_MODE_PIN=u_isp_top.I_cal_mode
+CAL_MODE_NET=S_cal_t2
+CAL_TRIG_PIN=u_isp_top.I_cal_trig
+CAL_TRIG_NET=S_cal_trig
+CAL_MODE_CDC=PASS
+CAL_TRIG_NET_CHECK=PASS
+CAL_TGL_LOADS=S_cal_tgl_i.i0 S_cal_tgl_i1.i0 S_cal_tgl_i5.I S_cal_tgl_reg.q u_cal_mode_cdc.I_cal_tgl
 ```
+
+即 `I_cal_mode` 只能由 CSI 域同步后的 `S_cal_t2` 驱动，`S_cal_tgl`
+的负载只在 50 MHz 域和同步器输入。
 
 ## 说明与边界
 
-- `ref/isp_ccl_circle_ref.v` 是 HEAD `2762152` 版本的 golden（仅含溢出哨兵修复），
-  用于逐字段对比；桥接模块的测试**不需要**这个副本。
-- 桥接测试的写侧为 103.52 MHz、CCL 侧 25 MHz（50 MHz/2），一行 2300 拍；
-  场景包含两帧干净圆、连续帧、帧内强制溢出、满恰逢 tuser 的恢复。
-- 仿真为掩膜域合成场景，不含摄像头光学、噪声与实拍条件。
+- 本轮补充的顶层短探针使用行为级存储器模型：有效像素链路有输出，但部分 POP 行首四像素不同；差异在 POP 输入前已出现，是否与仿真模型有关尚未确定，需上板观察。AWB 的帧首信号采用原有提前传递约定，不能以它与 valid 不同拍单独断定故障。
+- 仿真为合成场景，不含摄像头光学、噪声、运动模糊、Bayer 去马赛克误差与 HDMI 压缩；
+  板端仍需人工确认。
+- `tb_frontend` 直接给 AWB 之后的颜色；AWB 本身由 `tb_awb_apply` 单独验证，
+  两者的联合收敛未做端到端波形。
+- 标签表容量 15；彩色/多色背景场景可能出现 `O_ovf=1`（球仍可检出），
+  复杂背景的颜色种类超过容量时仍会失败。
+- POP 色相区分是 RTL 级证据，最终观感需上板确认。
