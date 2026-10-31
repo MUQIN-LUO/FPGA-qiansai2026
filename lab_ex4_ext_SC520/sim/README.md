@@ -26,6 +26,9 @@ run.bat
 | `tb/tb_ccl_color.v` | `isp_ccl_circle.v` | 颜色一致性：异色接触分离、**同色接触仍合并**（证明不是几何硬切）、红/肤 50/50 混合格边界；颜色输入与 `isp_fg_mask.O_rgb` 一样取 4 像素平均 |
 | `tb/tb_frontend.v` | `edge_detect_96` + `isp_bg_est` + `isp_fg_mask` + `isp_ccl_bridge` | 真实前端链路：绿/红/蓝球、手持球、手指压球、蓝布/双色底、无球、方块、卷尺、过小球、**d=40/60/100 px 小球+手遮挡+复杂背景**、**FIFO 溢出注入与恢复** |
 | `tb/tb_isp_top_display.v` | 完整 `isp_top`（RAW→demosaic→AWB→显示选择）+ 行为级 PH1P 原语模型 | 显示通路诊断：真实行/帧时序、POP/RAW/GRAY/EDGE 切换、valid/tuser/tlast、POP 行首套印。**当前在行为级模型下未通过，不作为验收证据**；用 `run_isp_top_display.bat` 单独运行，需上板确认 |
+| `tb/tb_det_frontend_awb.v` | 真实 `awb` + `edge_detect_96` + `isp_fg_mask` + `isp_bg_est` + `isp_ccl_bridge` | 提前帧首（AWB `O_tuser` off-valid）、检测专用 `O_tuser_alg` 与**首个有效像素**同拍（帧首特征像素 0x808080 断言）、mask/RGB 行首/行尾逐拍对应、圆 bbox 坐标 (540,260)-(743,460)、FIFO 溢出后恢复。**帧首 fg RGB 错位已定位为 `isp_fg_mask` 的 S2 被 `I_edge_valid` 门控导致首拍漏采，改为每拍无条件寄存后 PASS** |
+| `tb/tb_ae_ctrl.v` | `ae_ctrl`（行为 cfg_done 握手） | 上电初值、暗场景到 AG_MAX、亮场景先降增益再缩曝光、死区、holdoff；**不证明真实 I2C 写入** |
+| `tb/tb_ae_i2c.v` | `uicfgcs520` + `uii2c` + 受控 SDA 从机模型 | 真实 I2C 事务：初始化表 165 写 + 传感器 ID 0x9e4b；AE 请求后核对 8 笔写：0x3812=00（hold 开始）、0x3e00/01/02 曝光 1991、0x3e09/06/07 增益 96、0x3812=30（生效），以及 `O_ae_cfg_done` 完成时序；无 I2C 错误 |
 
 ## 前端时序模型（重要）
 
@@ -68,7 +71,22 @@ CAL_TGL_LOADS=S_cal_tgl_i.i0 S_cal_tgl_i1.i0 S_cal_tgl_i5.I S_cal_tgl_reg.q u_ca
 
 ## 说明与边界
 
-- 本轮补充的顶层短探针使用行为级存储器模型：有效像素链路有输出，但部分 POP 行首四像素不同；差异在 POP 输入前已出现，是否与仿真模型有关尚未确定，需上板观察。AWB 的帧首信号采用原有提前传递约定，不能以它与 valid 不同拍单独断定故障。
+- 显示约定：AWB 的 `O_tuser` 仍按原厂直通（早于数据 ~52 拍），仅显示通路使用；
+  **检测链路改用 `O_tuser_alg=I_tuser_r2`**（与 `O_tvalid/O_tdata` 同拍）。
+  `tb_det_frontend_awb` 用帧首特征像素证明 `O_tuser_alg` 与首个有效像素同拍，
+  圆 bbox 为 (540,260)-(743,460)；行首/行尾 mask/RGB 逐拍对应通过。
+- `isp_fg_mask` 两处对齐修正：
+  1) 颜色差分支 S1 比 Sobel/edge 晚一拍 → 增加 S2 对齐；
+  2) S2 原先被 `I_edge_valid` 门控，首有效拍（tuser 当拍）的 S1 被漏采，
+     导致帧首 O_rgb 仍是背景 → 改为每拍无条件寄存 S1，输出仍由 O_valid 门控。
+  修正后 `tb_det_frontend_awb` 的帧首 marker、行首/行尾 RGB、bbox、圆检测、
+  FIFO 溢出恢复全部 PASS；`tb_frontend` 27 场景在新 RTL 上重新回归 PASS。
+- AE 亮度：参数改为目标 80（原 64）、增益上限 96/6x（原 80/4x）、大步长 8（原 16）；
+  曝光优先、死区 6、holdoff 4 帧不变。`tb_ae_ctrl` 验证闭环/限幅；
+  `tb_ae_i2c` 用受控 I2C 从机验证真实 uicfgcs520 的 8 笔写（group hold 0x3812=00/30、
+  曝光 1991、增益 96）与完成时序。**OSD 第 6 行显示的是“AE 请求并已成功下发”
+  的曝光/增益值，不是从传感器回读的实际值**（I2C 未回读）；值经 24MHz→CSI→HDMI
+  两级异步域中继，避免 24MHz 与 HDMI 同源 PLL 的 CDC 时序违例，未修改 SDC。
 - 仿真为合成场景，不含摄像头光学、噪声、运动模糊、Bayer 去马赛克误差与 HDMI 压缩；
   板端仍需人工确认。
 - `tb_frontend` 直接给 AWB 之后的颜色；AWB 本身由 `tb_awb_apply` 单独验证，

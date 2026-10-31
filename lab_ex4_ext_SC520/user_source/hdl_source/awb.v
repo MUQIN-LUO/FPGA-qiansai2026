@@ -41,7 +41,8 @@ module awb  #(
     output                  I_tready ,  // 输入数据准备好信号
 
     output                  O_tlast  ,  // 输出行结束信号
-    output                  O_tuser  ,  // 输出帧开始信号
+    output                  O_tuser  ,  // 输出帧开始信号（显示约定：直通，早于数据）
+    output                  O_tuser_alg, // 与 O_tvalid/O_tdata 同拍的帧首（检测链路专用）
     output [95:0]           O_tdata  ,  // 输出数据
     output                  O_tvalid ,  // 输出数据有效信号
     input                   O_tready  , // 输出数据准备好信号
@@ -350,8 +351,12 @@ module awb  #(
     //   与延迟后的数据错开 50 拍"这个时序对齐的（原厂 hdl_source/awb.v 就是
     //    assign O_tuser = I_tuser）。这里若改成 I_tuser_r2，帧起点会晚 52 拍，
     //   表现为画面整体横向位移。
-    assign  O_tuser  = I_tuser    ;                          // 帧开始信号
+    assign  O_tuser  = I_tuser    ;                          // 显示约定：直通（早于数据）
     assign  O_tvalid = valid_d2;                             // 输出有效信号
+    // 检测链路专用：I_tuser_r2 与 valid_d2/O_tdata 同拍。
+    // 若检测也用 O_tuser（早 ~52 拍），tuser 会落在 valid=0 的拍上，
+    // 掩膜 FIFO 收不到帧首，CCL 的 S_frame_open 永远为 0。
+    assign  O_tuser_alg = I_tuser_r2;
 
 	// 输出数据，由四个像素的数据拼接而成
     assign  O_tdata = O_tvalid?{R_new_x4,G_new_x4,B_new_x4,

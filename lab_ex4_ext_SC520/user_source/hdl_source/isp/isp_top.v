@@ -93,6 +93,7 @@ wire         m_aixs_tvalid;  //synthesis keep
   // 否则会先建出隐式线网（TD 会报 HDL-1007，且数据总线可能被截成 1 位）。
   wire [ 95:0] S_awb_data;
   wire         S_awb_valid, S_awb_tlast, S_awb_tuser;
+  wire         S_awb_tuser_alg;   // 与 S_awb_valid/S_awb_data 同拍（检测专用）
   wire [23:0] S_awb_meas;
 
   wire         S_rgb_tlast;   // 先声明：第 79 行 O_tlast 就要用
@@ -238,6 +239,7 @@ awb #(
     .I_tready(m_aixs_tready),
     .O_tlast (S_awb_tlast ),
     .O_tuser (S_awb_tuser ),
+    .O_tuser_alg(S_awb_tuser_alg),
     .O_tdata (S_awb_data ),
     .O_tvalid(S_awb_valid),
     .O_tready(awb_O_tready),
@@ -274,7 +276,11 @@ awb #(
     wire [95:0] S_det_data  = S_rgb_data;
     wire        S_det_valid = S_rgb_valid;
     wire        S_det_tlast = S_rgb_tlast;
-    wire        S_det_tuser = S_rgb_tuser;
+    // 检测链路帧首：必须与 S_det_valid/S_det_data 同拍。
+    //   AWB 的 O_tuser 按原厂显示约定直通（早于数据 ~52 拍），不能直接给
+    //   掩膜/CCL：tuser 会落在 valid=0 的拍上，掩膜 FIFO 收不到帧首，
+    //   CCL 的 S_frame_open 永远为 0。显示通路仍用 S_rgb_tuser，保持不变。
+    wire        S_det_tuser = BYPASS_AWB ? m_aixs_tuser : S_awb_tuser_alg;
 
     // ==================================================================
     // 颜色无关前景掩膜：色度 ∪ 亮度梯度（赛题改造需求 1）
@@ -307,7 +313,7 @@ awb #(
             S_fgin_data  <= S_rgb_data;
             S_fgin_valid <= S_rgb_valid;
             S_fgin_tlast <= S_rgb_tlast;
-            S_fgin_tuser <= S_rgb_tuser;
+            S_fgin_tuser <= S_det_tuser;   // 检测链路用同拍帧首
         end
     end
 
@@ -344,7 +350,7 @@ awb #(
         .I_clk   (axi4s_video_aclk),
         .I_rst_n (I_rst_n),
         .I_tvalid(S_rgb_valid),
-        .I_tuser (S_rgb_tuser),
+        .I_tuser (S_det_tuser),   // 同拍帧首：背景环带坐标不能早 52 拍复位
         .I_tdata (S_rgb_data),
         .O_bg_r  (S_bg_r),
         .O_bg_g  (S_bg_g),

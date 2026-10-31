@@ -38,6 +38,22 @@ echo === tb_ccl_color ===
 vlog -quiet %I%\isp_ccl_circle.v tb\tb_ccl_color.v
 vsim -c -quiet tb_ccl_color -do "run -all; quit -f" -l logs\tb_ccl_color.log
 
+echo === tb_ae_ctrl ===
+vlog -quiet %I%\..\uiisp_beta\ae_set.v tb\tb_ae_ctrl.v
+vsim -c -quiet tb_ae_ctrl -do "run -all; quit -f" -l logs\tb_ae_ctrl.log
+
+echo === tb_ae_i2c (controlled I2C slave model) ===
+set U=%R%\uics520_cfg
+vlog -quiet %U%\uicfgcs520.v %R%\uics500_cfg\uii2c.v %U%\uics520reg_720p60.v ^
+    %U%\SC520GainTbl.v %U%\uics520regAE.v tb\tb_ae_i2c.v
+vsim -c -quiet tb_ae_i2c -do "run -all; quit -f" -l logs\tb_ae_i2c.log
+
+echo === tb_det_frontend_awb (early tuser / circle / FIFO recovery) ===
+vlog -quiet %R%\awb.v %I%\awb\divider\divider_gate.v %I%\awb\signal_delay.v ^
+    tb\blk_mem_gen_awb_delay_signal.v %I%\edge_detect_96.v %I%\isp_shape_circle.v ^
+    %I%\isp_mask_fifo.v %I%\isp_ccl_circle.v %I%\isp_ccl_bridge.v tb\tb_det_frontend_awb.v
+vsim -c -quiet tb_det_frontend_awb -do "run -all; quit -f" -l logs\tb_det_frontend_awb.log
+
 echo === tb_frontend (real line burst / blanking) ===
 vlog -quiet %I%\isp_ccl_circle.v %I%\isp_mask_fifo.v %I%\isp_ccl_bridge.v ^
     %I%\isp_shape_circle.v %I%\edge_detect_96.v tb\tb_frontend.v

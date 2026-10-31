@@ -32,6 +32,8 @@ module hdmi_mixer #(
     input wire[7:0]   I_avg_b,
     input wire[9:0]   I_gr100,          // 当前白平衡增益 x100（如 123 = 1.23x）
     input wire[9:0]   I_gb100,
+    input wire[15:0]  I_ae,             // AE 曝光（半行单位，0..1991）
+    input wire[15:0]  I_ag,             // AE 增益索引（16..96，6x 上限）
     input wire[1:0]   I_cal_st,          // 一键标定状态 0/1/2/3
 
     output wire       O_video_rd_en,
@@ -112,7 +114,7 @@ module hdmi_mixer #(
     localparam integer OSD_ADV   = OSD_CELL * OSD_SCALE;    // 字距 30
     localparam integer OSD_W     = 8 * OSD_ADV;             // 240（最长一行 LAT:33MS）
     localparam integer OSD_ROWH  = OSD_CELL * OSD_SCALE;    // 30  单行高
-    localparam integer OSD_H     = 6 * OSD_ROWH;            // 180 六行（第 5 行显示白平衡增益）
+    localparam integer OSD_H     = 7 * OSD_ROWH;            // 210 七行（第 6 行显示 AE 曝光/增益）
     localparam integer OSD_TOP   = 24;                      // 上边距
     localparam integer OSD_X0    = 24;                      // 左边距
 
@@ -123,14 +125,16 @@ module hdmi_mixer #(
     wire [11:0] S_osd_oy = S_y_2d - OSD_TOP;
 
     // 第 0 行帧率，第 1 行算法，第 2 行延迟，第 3 行 R/G，第 4 行 B，
-    // 第 5 行白平衡增益（R123B185 表示 R=1.23x、B=1.85x）
-    wire [2:0]  S_osd_ridx = (S_osd_oy >= (5*OSD_ROWH)) ? 3'd5 :
+    // 第 5 行白平衡增益（R123B185），第 6 行 AE 曝光/增益（E1991G96）。
+    wire [2:0]  S_osd_ridx = (S_osd_oy >= (6*OSD_ROWH)) ? 3'd6 :
+                             (S_osd_oy >= (5*OSD_ROWH)) ? 3'd5 :
                              (S_osd_oy >= (4*OSD_ROWH)) ? 3'd4 :
                              (S_osd_oy >= (3*OSD_ROWH)) ? 3'd3 :
                              (S_osd_oy >= (2*OSD_ROWH)) ? 3'd2 :
                              (S_osd_oy >= OSD_ROWH)     ? 3'd1 : 3'd0;
     wire [11:0] S_osd_oyr  = S_osd_oy -
-                             ((S_osd_ridx == 3'd5) ? 5*OSD_ROWH :
+                             ((S_osd_ridx == 3'd6) ? 6*OSD_ROWH :
+                              (S_osd_ridx == 3'd5) ? 5*OSD_ROWH :
                               (S_osd_ridx == 3'd4) ? 4*OSD_ROWH :
                               (S_osd_ridx == 3'd3) ? 3*OSD_ROWH :
                               (S_osd_ridx == 3'd2) ? 2*OSD_ROWH :
@@ -276,6 +280,57 @@ module hdmi_mixer #(
         end
     end
 
+    // ---- AE 曝光/增益拆位（第 6 行板测状态：E1991G96）----
+    //   曝光 0..1991：千位 0/1，余下 0..999 拆百/十/个；
+    //   增益索引 16..96 显示十/个两位（当前上限 96，不会到百位）。
+    function [3:0] div100_999;
+        input [9:0] x;
+        begin
+            if      (x >= 10'd900) div100_999 = 4'd9;
+            else if (x >= 10'd800) div100_999 = 4'd8;
+            else if (x >= 10'd700) div100_999 = 4'd7;
+            else if (x >= 10'd600) div100_999 = 4'd6;
+            else if (x >= 10'd500) div100_999 = 4'd5;
+            else if (x >= 10'd400) div100_999 = 4'd4;
+            else if (x >= 10'd300) div100_999 = 4'd3;
+            else if (x >= 10'd200) div100_999 = 4'd2;
+            else if (x >= 10'd100) div100_999 = 4'd1;
+            else                   div100_999 = 4'd0;
+        end
+    endfunction
+
+    wire [11:0] S_ae_v    = (I_ae[11:0] > 12'd1991) ? 12'd1991 : I_ae[11:0];
+    wire        S_ae_th   = (S_ae_v >= 12'd1000);
+    wire [11:0] S_ae_rem  = S_ae_th ? (S_ae_v - 12'd1000) : S_ae_v;
+    wire [3:0]  S_ae_h    = div100_999(S_ae_rem[9:0]);
+    wire [9:0]  S_ae_rem2 = S_ae_rem[9:0] -
+                            (({6'd0,S_ae_h} << 6) + ({6'd0,S_ae_h} << 5) + ({6'd0,S_ae_h} << 2));
+    wire [3:0]  S_ae_t    = div10_99(S_ae_rem2[6:0]);
+    wire [6:0]  S_ae_o    = S_ae_rem2[6:0] - ({3'd0,S_ae_t} << 3) - ({3'd0,S_ae_t} << 1);
+
+    wire [7:0]  S_aeg_v   = (I_ag > 16'd255) ? 8'd255 : I_ag[7:0];
+    wire [1:0]  S_aeg_h   = div100_255(S_aeg_v);
+    wire [7:0]  S_aeg_r   = S_aeg_v -
+                            (({6'd0,S_aeg_h} << 6) + ({6'd0,S_aeg_h} << 5) + ({6'd0,S_aeg_h} << 2));
+    wire [3:0]  S_aeg_t   = div10_99(S_aeg_r[6:0]);
+    wire [6:0]  S_aeg_o   = S_aeg_r[6:0] - ({3'd0,S_aeg_t} << 3) - ({3'd0,S_aeg_t} << 1);
+
+    reg        S_ae_th_q;
+    reg [3:0]  S_ae_h_q, S_ae_t_q, S_ae_o_q;
+    reg [3:0]  S_aeg_t_q, S_aeg_o_q;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_ae_th_q <= 1'b0;
+            S_ae_h_q <= 4'd0; S_ae_t_q <= 4'd0; S_ae_o_q <= 4'd0;
+            S_aeg_t_q <= 4'd0; S_aeg_o_q <= 4'd0;
+        end
+        else begin
+            S_ae_th_q <= S_ae_th;
+            S_ae_h_q  <= S_ae_h;  S_ae_t_q <= S_ae_t;  S_ae_o_q <= S_ae_o;
+            S_aeg_t_q <= S_aeg_t; S_aeg_o_q <= S_aeg_o;
+        end
+    end
+
     // ---- 检测像素数（0~999）拆成三位，供调试显示 ----
     reg [3:0] S_dc_h;
     always @(*) begin
@@ -387,6 +442,19 @@ module hdmi_mixer #(
                     3'd5:    S_osd_ch = 5'd4 + S_gb_h_q;
                     3'd6:    S_osd_ch = 5'd4 + S_gb_t_q;
                     default: S_osd_ch = 5'd4 + S_gb_o_q;
+                endcase
+            end
+            3'd6: begin
+                // 第 6 行：AE 曝光/增益  E1991G96（板测状态）
+                case (S_osd_slot)
+                    3'd0:    S_osd_ch = 5'd19;              // E
+                    3'd1:    S_osd_ch = 5'd4 + S_ae_th_q;   // 千位 0/1
+                    3'd2:    S_osd_ch = 5'd4 + S_ae_h_q;    // 百位
+                    3'd3:    S_osd_ch = 5'd4 + S_ae_t_q;    // 十位
+                    3'd4:    S_osd_ch = 5'd4 + S_ae_o_q;    // 个位
+                    3'd5:    S_osd_ch = 5'd21;              // G
+                    3'd6:    S_osd_ch = 5'd4 + S_aeg_t_q;   // 增益十位
+                    default: S_osd_ch = 5'd4 + S_aeg_o_q;   // 增益个位
                 endcase
             end
             3'd2: begin

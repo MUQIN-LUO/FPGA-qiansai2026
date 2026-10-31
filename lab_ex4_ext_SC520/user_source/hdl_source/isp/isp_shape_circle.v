@@ -137,13 +137,41 @@ module isp_fg_mask #(
     wire [3:0] S_grad_hit = { |I_edge_tdata[23:0],   |I_edge_tdata[47:24],
                               |I_edge_tdata[71:48],  |I_edge_tdata[95:72] };
 
-    assign O_mask  = S1_hit | S_grad_hit;
-    assign O_rgb   = S1_rgb;
+    // ★ 对齐修正：颜色差分支 S1 比 Sobel/edge 输出早一拍。
+    //   旧实现直接把 S1_hit/S1_rgb 与 edge 的 grad/valid/tuser 拼在一起，
+    //   导致 mask 与 RGB 颜色相对 CCL 坐标早 4 像素（实测圆 bbox 左移一格），
+    //   颜色一致性 CCL 也会用"下一拍"的 RGB 去判当前格。
+    //   这里把 S1 再打一拍（S2），与 edge 输出同拍；O_valid/tuser/tlast
+    //   仍来自 edge，mask/RGB/x/y 全部对齐到同一拍。
+    reg [3:0]  S2_hit;
+    reg [14:0] S2_rgb;
+    reg [11:0] S2_x, S2_y;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S2_hit <= 4'd0;
+            S2_rgb <= 15'd0;
+            S2_x   <= 12'd0;
+            S2_y   <= 12'd0;
+        end
+        else begin
+            // 每拍无条件寄存 S1：S2 与 edge 的 O_tdata 对应同一个输入拍。
+            // 若用 I_edge_valid 门控，首有效拍（tuser 当拍）的 S1 会被漏采，
+            // 实测首拍 marker 的 S1 已在，但 O_rgb 仍是背景（帧首 RGB 错位）。
+            // 输出有效性仍由 O_valid=I_edge_valid 门控，空拍不会外泄。
+            S2_hit <= S1_hit;
+            S2_rgb <= S1_rgb;
+            S2_x   <= S1_x;
+            S2_y   <= S1_y;
+        end
+    end
+
+    assign O_mask  = S2_hit | S_grad_hit;
+    assign O_rgb   = S2_rgb;
     assign O_valid = I_edge_valid;
     assign O_tlast = I_edge_tlast;
     assign O_tuser = I_edge_tuser;
-    assign O_x     = S1_x;
-    assign O_y     = S1_y;
+    assign O_x     = S2_x;
+    assign O_y     = S2_y;
 
 endmodule
 

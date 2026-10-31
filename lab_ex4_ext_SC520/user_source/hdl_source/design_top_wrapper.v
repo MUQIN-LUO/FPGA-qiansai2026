@@ -215,6 +215,8 @@ module design_top_wrapper (
 
     wire [9:0]  S_gr100, S_gb100;           // 当前白平衡增益 x100（ISP 域）
     reg  [9:0]  S_gr100_p, S_gb100_p;       // 锁存到像素域供 OSD 显示
+    reg  [15:0] S_ae_pix, S_ag_pix;         // AE 曝光/增益（经 CSI 中继到像素域）
+    reg  [15:0] S_ae_csi, S_ag_csi;         // CSI 域中继（24MHz→CSI→HDMI）
 
     wire        S_ddr_user_wr_en;       
     wire        S_ddr_user_rd_en;       
@@ -633,6 +635,7 @@ module design_top_wrapper (
             gr_s1 <= 10'd0; gr_s2 <= 10'd0;
             gb_s1 <= 10'd0; gb_s2 <= 10'd0;
             S_gr100_p <= 10'd0; S_gb100_p <= 10'd0;
+            S_ae_pix   <= 16'd0; S_ag_pix  <= 16'd0;
             S_avg_r_p <= 8'd0; S_avg_g_p <= 8'd0; S_avg_b_p <= 8'd0;
             S_det_minx_p <= 12'd0; S_det_maxx_p <= 12'd0;
             S_det_miny_p <= 12'd0; S_det_maxy_p <= 12'd0;
@@ -700,6 +703,9 @@ module design_top_wrapper (
                 S_det_cand_p  <= S_rc_cand;
                 S_det_cnt_p   <= S_rc_cnt;
                 S_cal_st_p    <= S_rc_cal;
+                // AE 状态来自 CSI 域中继，显示帧边界整组锁存
+                S_ae_pix      <= S_ae_csi;
+                S_ag_pix      <= S_ag_csi;
             end
         end
     end
@@ -1213,14 +1219,50 @@ module design_top_wrapper (
     end
   end
 
+  // AE 曝光/增益状态跨到 HDMI 像素域（OSD 第 6 行板测用）。
+  //   源域：AE 值在每次 I2C 写完成后（O_ae_cfg_done 上升）已稳定；
+  //   这里只翻转一个电平，像素域 2FF 后按边沿整组采样，避免多 bit 撕裂。
+  reg S_ae_done_d, S_ae_tgl;
+  always @(posedge S_24m_clk or negedge S_rst_n) begin
+    if (!S_rst_n) begin
+      S_ae_done_d <= 1'b0;
+      S_ae_tgl    <= 1'b0;
+    end
+    else begin
+      S_ae_done_d <= S_ae_cfg_done;
+      if (S_ae_cfg_done && !S_ae_done_d)
+        S_ae_tgl <= ~S_ae_tgl;
+    end
+  end
+
+  // AE 状态经 CSI 域中继：24MHz 与 CSI 属不同异步时钟组，CSI 与 HDMI
+  // 也不同组，因此两个跨域都不按同源同步路径做 STA（避免 24MHz→HDMI
+  // 同组直采的 −0.294ns 违例）。数据在 toggle 前已稳定，边沿整组采样。
+  reg [2:0]  S_ae_csync;
+  always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+    if (!S_rst_n) begin
+      S_ae_csync <= 3'd0;
+      S_ae_csi   <= 16'd0;
+      S_ag_csi   <= 16'd0;
+    end
+    else begin
+      S_ae_csync <= {S_ae_csync[1:0], S_ae_tgl};
+      if (S_ae_csync[2] ^ S_ae_csync[1]) begin
+        S_ae_csi <= S_ae;
+        S_ag_csi <= S_ag;
+      end
+    end
+  end
+
   // AE 闭环控制器（替代原厂按键手动 AE，模块在 uiisp_beta/ae_set.v 内）
   ae_ctrl #(
-      // Low-noise operating point: long exposure, unity initial gain.
-      // SC520GainTbl: 16=1x, 48=2x, 80=4x, 96=6x (digital fine gain).
+      // 温和提亮：目标 64→80（约 36% 满量程），增益上限 4x→6x；
+      // 曝光优先、死区 6、holdoff 4 帧，控制过曝/闪烁/噪声。
+      // SC520GainTbl: 16=1x, 48=2x, 80=4x, 96=6x（细调仍为 1x）。
       .AE_INIT   (16'd1991),
       .AG_INIT   (16'd16  ),
-      .AG_MAX    (16'd80  ),
-      .AE_TARGET (8'd64   )
+      .AG_MAX    (16'd96  ),
+      .AE_TARGET (8'd80   )
   ) u_ae_ctrl (
       .I_clk          (S_24m_clk      ),
       .I_rst          (~S_rst_n       ),
@@ -1572,6 +1614,8 @@ isp_top u_isp_top (
         .O_vtc_last    ( S_hdmi_last      )
     );
 
+    // AE 状态在显示帧边界锁存（值来自 CSI 域中继，见 S_ae_csi）
+
     hdmi_mixer #(
         .H_OFFSET   ( 0    ),
         .V_OFFSET   ( 0    ),
@@ -1609,6 +1653,8 @@ isp_top u_isp_top (
         .I_avg_b         ( S_avg_b_p        ),
         .I_gr100         ( S_gr100_p        ),
         .I_gb100         ( S_gb100_p        ),
+        .I_ae            ( S_ae_pix         ),
+        .I_ag            ( S_ag_pix         ),
         .I_cal_st        ( S_cal_st_p       ),
         .O_video_rd_en   ( S_hdmi_window_rd_en),
         .I_video_rd_data ( S_video_rd_data    ),
