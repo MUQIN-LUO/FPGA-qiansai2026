@@ -18,14 +18,14 @@ module tb_pop;
     reg [95:0] tdata = 0; reg [1:0] pal = 0;
     reg tvalid = 0, tuser = 0, tlast = 0;
     wire [95:0] o0, o1;
-    isp_pop96 #(.HUE_AWARE(1'b0)) u0 (
+    isp_pop96 #(.HUE_AWARE(1'b0), .USE_SHARED_Y(1'b0)) u0 (
         .I_clk(clk), .I_rst_n(rst_n), .I_tvalid(tvalid),
         .I_tuser(tuser), .I_tlast(tlast),
-        .I_tdata(tdata), .I_pal(pal), .O_tdata(o0));
-    isp_pop96 #(.HUE_AWARE(1'b1)) u1 (
+        .I_tdata(tdata), .I_y4(32'd0), .I_pal(pal), .O_tdata(o0));
+    isp_pop96 #(.HUE_AWARE(1'b1), .USE_SHARED_Y(1'b0)) u1 (
         .I_clk(clk), .I_rst_n(rst_n), .I_tvalid(tvalid),
         .I_tuser(tuser), .I_tlast(tlast),
-        .I_tdata(tdata), .I_pal(pal), .O_tdata(o1));
+        .I_tdata(tdata), .I_y4(32'd0), .I_pal(pal), .O_tdata(o1));
 
     function [95:0] pack4;
         input [23:0] p0,p1,p2,p3;

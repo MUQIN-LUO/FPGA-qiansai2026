@@ -15,6 +15,9 @@
 // ==========================================================================
 module isp_pop96 #(
     parameter        HUE_AWARE = 1'b0,
+    // 1 = 亮度档使用顶层共享的 4 像素 Y（I_y4），0 = 模块内部自行计算。
+    // 两种路径的公式完全相同：Y = R/4 + G/2 + B/4。
+    parameter        USE_SHARED_Y = 1'b0,
     parameter [7:0]  T0 = 8'd12,
     parameter [7:0]  T1 = 8'd56,
     parameter [7:0]  T2 = 8'd135
@@ -24,7 +27,8 @@ module isp_pop96 #(
     input  wire        I_tvalid,
     input  wire        I_tuser,       // 帧首
     input  wire        I_tlast,       // 行尾
-    input  wire [95:0] I_tdata,       // 白平衡后 4 像素 RGB888
+    input  wire [95:0] I_tdata,       // 白平衡后 4 像素 RGB888（色相仍用 RGB）
+    input  wire [31:0] I_y4,          // 共享亮度 {Y3,Y2,Y1,Y0}，USE_SHARED_Y=1 时有效
     input  wire [1:0]  I_pal,         // 配色方案
     output wire [95:0] O_tdata        // POP 输出（整体相对 I_tdata 延迟 1 拍）
 );
@@ -165,10 +169,17 @@ module isp_pop96 #(
     endfunction
 
     // ---------------- 级 1：当前输入拍 4 像素亮度档 + 色相分类 ----------------
-    wire [1:0] cb0 = pop_band(rgb_to_y8(I_tdata[95:72]));
-    wire [1:0] cb1 = pop_band(rgb_to_y8(I_tdata[71:48]));
-    wire [1:0] cb2 = pop_band(rgb_to_y8(I_tdata[47:24]));
-    wire [1:0] cb3 = pop_band(rgb_to_y8(I_tdata[23:0]));
+    // 共享路径与本地路径的位序一致：bit[31:24] 是最左像素。
+    wire [31:0] y_local = { rgb_to_y8(I_tdata[95:72]),
+                            rgb_to_y8(I_tdata[71:48]),
+                            rgb_to_y8(I_tdata[47:24]),
+                            rgb_to_y8(I_tdata[23:0]) };
+    wire [31:0] y_use = USE_SHARED_Y ? I_y4 : y_local;
+
+    wire [1:0] cb0 = pop_band(y_use[31:24]);
+    wire [1:0] cb1 = pop_band(y_use[23:16]);
+    wire [1:0] cb2 = pop_band(y_use[15:8]);
+    wire [1:0] cb3 = pop_band(y_use[7:0]);
     wire [1:0] ch0 = hue_of(I_tdata[95:72]);
     wire [1:0] ch1 = hue_of(I_tdata[71:48]);
     wire [1:0] ch2 = hue_of(I_tdata[47:24]);

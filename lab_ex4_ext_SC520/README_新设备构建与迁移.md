@@ -11,10 +11,14 @@
 ## 1. 先说结论：什么可迁移，什么没验证
 
 **可迁移（已验证）**
-- `.al` 里 **70 个文件条目全部是相对路径**，相对于 `.al` 自己所在目录：
-  - 68 条形如 `../user_source/...`（62 条 `hdl_source`，含新增的
-    `isp_mask_fifo.v`、`isp_ccl_bridge.v`；6 条 adc/IP xml）
-  - 2 条形如 `camera_to_dsi_display.sdc`、`al_ip/ChipWatcher_mipi/ChipWatcher_mipi.xml`
+- `.al` 里 **70 个文件条目全部是相对路径**，相对于 `.al` 自己所在目录
+  （基线 074ae1b 为 68 条，本阶段新增 `isp_gray_share96.v`、
+  `edge_detect_y96.v` 两条）：
+  - 68 条形如 `../user_source/...`：其中 **59 条 Verilog/SystemVerilog 源文件**
+    （含 `isp_mask_fifo.v`、`isp_ccl_bridge.v`、`isp_gray_share96.v`、
+    `edge_detect_y96.v`），另有 9 条 adc/xml/ipc（`pin.adc`、5 条 IP
+    xml/ipc、`ddr2.xml` 与 2 条 `blk_mem_gen*.xml`）。
+  - 2 条为 `camera_to_dsi_display.sdc`、`al_ip/ChipWatcher_mipi/ChipWatcher_mipi.xml`。
   - **没有任何一条是绝对路径**（`grep -E 'Path="(/|[A-Za-z]:)'` 无结果）。
 - 约束与 IP 均已入库：`td_project/camera_to_dsi_display.sdc`、
   `user_source/constraints_source/pin.adc`、`user_source/ip_source/**`（19 个 xml/ipc）、
@@ -62,8 +66,10 @@ cd <repo>/lab_ex4_ext_SC520/td_project
 
 | 检查项 | 期望值 | 为什么 |
 |---|---|---|
-| 文件条目数 | **70** | 少一个就会缺 design unit |
-| `isp_ccl_circle.v` | 在（CompileOrder 61） | 连通域圆形检测 |
+| 文件条目数 | **70** | 少一个就会缺 design unit（基线 68 + 本阶段 2） |
+| `isp_gray_share96.v` | 在（CompileOrder 67） | 共享 RGB->Y 与 4 像素/拍检测灰度 tap |
+| `edge_detect_y96.v` | 在（CompileOrder 68） | 共享 Y 的 Sobel 核心（`edge_detect_96.v` 成为 RGB 兼容包装） |
+| `isp_ccl_circle.v` | 在（CompileOrder 60） | 连通域圆形检测 |
 | `isp_gray_world.v`、`isp_shape_circle.v` | 在（58/59） | 灰度世界 AWB、前景掩膜 + 圆形判据 |
 | `isp_mask_fifo.v` | 在（64） | 掩膜跨时钟 FIFO |
 | `isp_ccl_bridge.v` | 在（65） | FIFO/坐标重建/CCL/丢拍恢复/结果 CDC 的桥接 |

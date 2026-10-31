@@ -132,3 +132,61 @@ CAL_TGL_LOADS=S_cal_tgl_i.i0 S_cal_tgl_i1.i0 S_cal_tgl_i5.I S_cal_tgl_reg.q u_ca
   复杂背景的颜色种类超过容量时仍会失败。本轮不扩大标签容量（避免时序/资源风险），
   只保证 `ovf` 在 HUD 上可见。
 - POP 色相区分是 RTL 级证据，最终观感需上板确认。
+
+## 第一阶段共享灰度回归（2026-11-01，实验性）
+
+本节只描述**共享 RGB->Y 框架**的回归；完整的上板说明见
+`../PHASE1_SHARED_GRAY_REPORT_20261101.md`。所有测试都直接实例化工程 RTL。
+
+| 测试 | 实例化的 RTL | 覆盖 / 判据 |
+|---|---|---|
+| `tb/tb_gray_share.v` | `isp_gray_share96.v`、`edge_detect_y96.v`、`edge_detect_96.v`、`isp_pop96.v` | ① RGB->Y 公式逐位比对；② tap 1 拍延迟的 Y/valid/tlast/显示 tuser/检测 tuser/(x,y)；③ 新 EDGE（共享 Y）与旧 EDGE（RGB 输入）逐像素、valid/tuser/tlast 完全一致；④ POP 共享 Y 与内部 Y 逐像素一致；⑤ GRAY 显示 2 拍路径与基线 2 寄存器路径逐像素一致；⑥ 16x4 小帧的 tuser/行尾/坐标回卷，以及 1280 宽 tap 的 x=1276->0/y+1。显示 tuser 故意在 valid=0 拍上打入，验证两条 tuser 路径分离。 |
+| `tb/tb_display_regression.v` | 完整 `isp_top`（可与 074ae1b 基线 RTL 同 TB 编译） | 真实 1280x720 行/场时序；POP→RAW→GRAY→EDGE 帧边界切换 + 最后一帧 POP→RAW 帧内切换；每 720 个 tlast 为一组，检查 valid=230400、tlast=720、tuser=1，打印 96bit `sel_data` 的逐组 HASH；统计 `O_frm_tgl` 翻转；显示 tuser off-valid 只统计不判错；POP 行首差异只作诊断。 |
+| `tb/tb_dg_stream.v` | 完整 `isp_top`（新 RTL） | 检查预留 `O_dg_*`：4 像素/拍、Y 与 AWB 输出逐拍一致、tuser 必须在 valid 拍、x=0..1276 步长 4、y=0..719。完整 1 帧（GRAY）为 230400/720/1；`+LINES=3 +FRAMES=2` 的有界运行覆盖 GRAY→EDGE 两模式（每帧 960/3）。该流不接受 `I_mode`。 |
+
+运行（ModelSim 10.3c，`vlib/vlog/vsim` 在 PATH）：
+
+```bat
+cd lab_ex4_ext_SC520\sim
+run.bat                         :: 既有快速回归 + tb_gray_share
+run_isp_top_display.bat         :: 旧的全 isp_top 诊断 TB（沿用，非本阶段验收依据）
+```
+
+`tb_display_regression` 的基线 A/B 需要单独编译 074ae1b 的
+`isp_top.v` / `edge_detect_96.v` / `isp_pop96.v` 到另一个 work 库，再运行同一 TB；
+逐组 `VALID/TLAST/TUSER/HASH` 必须一致。`tb_dg_stream` 只适用于新 RTL
+（基线没有 `O_dg_*` 端口）。
+
+### 预留检测灰度流接口（`isp_top` 端口）
+
+**权威位序（后续圆检测必须按此实现）**：
+
+| `O_dg_y4` 位域 | 像素 | 对应 AWB 输入 `I_rgb` 位域 |
+|---|---|---|
+| `[31:24]` | **x+0** | `[95:72]`（最左/最高像素） |
+| `[23:16]` | **x+1** | `[71:48]` |
+| `[15:8]`  | **x+2** | `[47:24]` |
+| `[7:0]`   | **x+3** | `[23:0]`（最右/最低像素） |
+
+```
+O_dg_y4[31:24]  // Y(x+0) <- I_rgb[95:72]
+O_dg_y4[23:16]  // Y(x+1) <- I_rgb[71:48]
+O_dg_y4[15:8]   // Y(x+2) <- I_rgb[47:24]
+O_dg_y4[7:0]    // Y(x+3) <- I_rgb[23:0]
+O_dg_valid
+O_dg_tuser      // 只来自与 valid 对齐的 AWB O_tuser_alg，不来自显示 tuser
+O_dg_tlast
+O_dg_x[11:0]    // 该拍 x+0 的列坐标 0,4,...,1276
+O_dg_y[11:0]    // 行号 0..719
+```
+
+⚠️ `isp_gray_share96.v` 里的 `O_y4 = {Y3,Y2,Y1,Y0}` 是 **MSB-first 打包标签**，
+**不是**像素序号：`Y3` 在 `[31:24]` = **x+0**；`Y0` 在 `[7:0]` = **x+3**。
+不要把 `Y0` 当成 x+0。源码已锁定，本轮只改文档，不改 RTL/哈希；
+后续检测器按上表位索引 / `x+0..x+3` 消费。
+
+相对 AWB 输出 `S_rgb_data` 的延迟固定为 **1 个 CSI 时钟**；
+`O_dg_tuser=1` 标记 (0,0)。该接口只提供 4 像素/拍的全分辨率灰度，
+**没有**计算梯度/Sobel；EDGE 仍使用水平 2 像素平均、垂直 1 行缓存的
+原有算法，不能把两者混称为“全分辨率梯度”。第一阶段没有接检测器，
+综合可能裁剪这些端口；接上消费者后即成为活跃逻辑。

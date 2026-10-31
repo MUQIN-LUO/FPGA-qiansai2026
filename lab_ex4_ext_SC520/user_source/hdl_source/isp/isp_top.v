@@ -204,6 +204,20 @@ module isp_top #(
     input  wire       I_cal_trig	,   // 一键标定请求（CSI 域，单拍电平事件）
     output reg  [1:0] O_cal_st		,   // 0=空闲 1=BUSY 2=OK 3=ERR
     output reg        O_frm_tgl		,   // 每帧尾翻转一次（供整组快照握手）
+    // ------------------------------------------------------------------
+    // 预留：给未来圆检测器的全分辨率灰度流（第一阶段不接检测器）
+    //   4 像素/拍，每像素 8 bit；valid/tuser/tlast 与数据同拍；
+    //   x = 该拍第一个像素的列坐标（0,4,...,1276），y = 行号（0..719）；
+    //   tuser 标记 (0,0)，且只来自与 valid 对齐的检测 tuser，不来自显示
+    //   tuser；相对 AWB 输出延迟 1 拍；与本模块 I_mode（显示模式）无关。
+    //   当前无消费者，综合可能将其裁剪；接检测器后即成为活跃逻辑。
+    // ------------------------------------------------------------------
+    output wire [31:0] O_dg_y4		,
+    output wire        O_dg_valid	,
+    output wire        O_dg_tuser	,
+    output wire        O_dg_tlast	,
+    output wire [11:0] O_dg_x		,
+    output wire [11:0] O_dg_y		,
     // Independent red-ball result; yellow outputs above are unchanged.
     output wire [11:0] O_red_minx, O_red_maxx, O_red_miny, O_red_maxy,
     output wire O_red_valid, O_red_cand, O_red_update,
@@ -433,6 +447,59 @@ awb #(
     wire        S_det_tuser = BYPASS_AWB ? m_aixs_tuser : S_awb_tuser_alg;
 
     // ==================================================================
+    // 共享 RGB -> 灰度（第一阶段的核心整理点）
+    // ------------------------------------------------------------------
+    // 只在 isp_rgb2y96 里计算一次 Y = R/4 + G/2 + B/4（与原实现逐位相同）：
+    //   · GRAY 显示：Y 复制成 {Y,Y,Y}
+    //   · EDGE 显示：edge_detect_y96 复用 Y（水平 2 像素平均、垂直 1 行不变）
+    //   · POP 亮度档：isp_pop96 复用 Y（色相仍取 RGB，观感不变）
+    //   · 前景 Sobel：u_fg_edge 复用 Y
+    //   · 预留检测灰度流：同一个 tap 输出 4 像素/拍 + 坐标
+    // tap 插入 1 拍寄存器。它替代了原来的 ed_tdata_d(96b)、gray_d1/d2(192b)，
+    // 并把 Y 加法树从 EDGE/POP/显示各算一遍变成只算一遍；这是真实的共享，
+    // 不是为了“看起来共享”而改变任何像素算法。
+    // ==================================================================
+    wire [31:0] S_y4_comb;
+    isp_rgb2y96 u_rgb2y96 (
+        .I_rgb (S_rgb_data),
+        .O_y4  (S_y4_comb)
+    );
+
+    wire [31:0] S_y4_r;          // 共享亮度，相对 S_rgb_data 延迟 1 拍
+    wire        S_yv, S_yl;      // 与 S_y4_r 同拍
+    wire        S_yu_disp;       // 显示用早期 tuser（保持原显示对齐）
+    wire        S_yu_det;        // 检测用 valid 对齐 tuser
+    wire [11:0] S_yx, S_yy;      // 该拍首像素坐标
+
+    isp_gray_tap96 #(
+        .IMG_WIDTH  (1280),
+        .IMG_HEIGHT (720 )
+    ) u_gray_tap96 (
+        .I_clk        (axi4s_video_aclk),
+        .I_rst_n      (I_rst_n),
+        .I_y4         (S_y4_comb),
+        .I_valid      (S_rgb_valid),
+        .I_tlast      (S_rgb_tlast),
+        .I_tuser_disp (S_rgb_tuser),
+        .I_tuser_det  (S_det_tuser),
+        .O_y4         (S_y4_r),
+        .O_valid      (S_yv),
+        .O_tlast      (S_yl),
+        .O_tuser_disp (S_yu_disp),
+        .O_tuser_det  (S_yu_det),
+        .O_x          (S_yx),
+        .O_y          (S_yy)
+    );
+
+    // 预留检测灰度流：直接来自共享 tap，不经过 I_mode 选择。
+    assign O_dg_y4    = S_y4_r;
+    assign O_dg_valid = S_yv;
+    assign O_dg_tuser = S_yu_det;
+    assign O_dg_tlast = S_yl;
+    assign O_dg_x     = S_yx;
+    assign O_dg_y     = S_yy;
+
+    // ==================================================================
     // 颜色无关前景掩膜：色度 ∪ 亮度梯度（赛题改造需求 1）
     // ------------------------------------------------------------------
     // 亮度梯度用第二个 edge_detect_96 实例算 Sobel，行缓存是 block RAM，
@@ -467,17 +534,19 @@ awb #(
         end
     end
 
-    edge_detect_96 #(
+    // 前景 Sobel 直接吃共享 Y。S_y4_r 与 S_fgin_data 都是 S_rgb_data 后
+    // 1 拍，三者（Y / 色度输入 / 控制）严格同拍，掩膜对齐不变。
+    edge_detect_y96 #(
         .IMG_WIDTH  (1280),
         .IMG_HEIGHT (720 ),
         .EDGE_TH    (11'd48)
     ) u_fg_edge (
         .I_clk   (axi4s_video_aclk),
         .I_rst_n (I_rst_n),
-        .I_tlast (S_fgin_tlast),
-        .I_tuser (S_fgin_tuser),
-        .I_tdata (S_fgin_data),
-        .I_tvalid(S_fgin_valid),
+        .I_tlast (S_yl),
+        .I_tuser (S_yu_det),
+        .I_y4    (S_y4_r),
+        .I_tvalid(S_yv),
         .I_tready(1'b1),
         .O_tlast (S_fgedge_tlast),
         .O_tuser (S_fgedge_tuser),
@@ -537,29 +606,11 @@ awb #(
         .O_y         (S_fg_y)
     );
 
-    // 基础要求(2)：Sobel 边缘检测（灰度 -> 行缓存 -> Sobel -> 二值化）
-    // 输入打一拍：AWB 乘法器输出直接进灰度的 3 级加法链会形成 14 级逻辑，
-    // 在 103.52MHz 下违例 -1.221ns，这里隔开一级流水。
-    reg [95:0] ed_tdata_d;
-    reg        ed_tlast_d;
-    reg        ed_tuser_d;
-    reg        ed_tvalid_d;
-
-    always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
-        if (!I_rst_n) begin
-            ed_tdata_d  <= 96'd0;
-            ed_tlast_d  <= 1'b0;
-            ed_tuser_d  <= 1'b0;
-            ed_tvalid_d <= 1'b0;
-        end
-        else begin
-            ed_tdata_d  <= S_rgb_data;
-            ed_tlast_d  <= S_rgb_tlast;
-            ed_tuser_d  <= S_rgb_tuser;
-            ed_tvalid_d <= S_rgb_valid;
-        end
-    end
-
+    // 基础要求(2)：Sobel 边缘检测（共享灰度 -> 行缓存 -> Sobel -> 二值化）
+    // 原来这里有 ed_tdata_d 把 RGB 打一拍再进灰度加法器。现在共享 tap 已经
+    // 在 AWB 之后打了一拍 Y，S_y4_r 就是与 S_rgb_data 对齐的延迟版本；
+    // 因此直接用它，不再复制 96 bit RGB。EDGE 的总延迟仍是 3 拍
+    // （tap 1 + edge_detect_y96 2），像素级行为与基线一致。
     // EDGE_TH 取值 0~2040（|Gx|+|Gy| 的满量程），越大越干净但弱边缘会丢掉。
     // 实测规律：mag ≈ 该处的 RAW10 阶跃幅度（amp64 -> mag 64~96，amp160 -> 128~192）。
     // 2026-10-28 第一轮（128 -> 80，已上板）：暗场弱边缘从 0/230 提到 46/230，
@@ -579,17 +630,17 @@ awb #(
     //   真要恢复得改成逐像素 Sobel（1280 宽行缓存），本轮不做。
     // 故取 48：能看见 64 完全看不见的 1 像素细线，代价是强噪声场景更花。
     // 红球/黄卷尺识别不读这里（它们吃 AWB 输出），本改动只影响显示。
-    edge_detect_96 #(
+    edge_detect_y96 #(
         .IMG_WIDTH (1280),
         .IMG_HEIGHT(720 ),
         .EDGE_TH   (11'd48)
-    ) u_edge_detect_96 (
+    ) u_edge_detect_y96 (
         .I_clk   (axi4s_video_aclk),
         .I_rst_n (I_rst_n),
-        .I_tlast (ed_tlast_d),
-        .I_tuser (ed_tuser_d),
-        .I_tdata (ed_tdata_d),
-        .I_tvalid(ed_tvalid_d),
+        .I_tlast (S_yl),
+        .I_tuser (S_yu_disp),   // 显示 tuser：保持原显示帧起始对齐
+        .I_y4    (S_y4_r),
+        .I_tvalid(S_yv),
         .I_tready(awb_O_tready),
         .O_tlast (edge_O_tlast),
         .O_tuser (edge_O_tuser),
@@ -599,30 +650,18 @@ awb #(
     );
 
     // ==================================================================
-    // 多算法切换：原图 / 边缘 / 灰度
-    //   边缘通路固有延迟 = 输入打拍(1) + 模块内输出寄存器(1) = 2 拍，
-    //   原图与灰度通路各补两级寄存器与之对齐，切换时不会出现行列错位。
+    // 多算法切换：原图 / 边缘 / 灰度 / POP
+    //   GRAY 显示只把共享 Y 复制成 {Y,Y,Y}，不再单独算一遍 RGB->Y。
+    //   共享 tap 延迟 1 拍；这里再打一拍 Y（32 bit），到 2 拍，与 raw_d2
+    //   及 POP/gray 的显示控制同拍。基线是 gray_comb + 两级 96 bit 寄存器，
+    //   像素值相同，寄存器从 192 bit 降到 32 bit。
     // ==================================================================
-    function [23:0] rgb_to_gray;
-        input [23:0] px;
-        reg   [7:0]  g;
+    function [23:0] y_to_rgb;
+        input [7:0] y;
         begin
-            g = {2'b0,px[23:18]} + {1'b0,px[15:9]} + {2'b0,px[7:2]};
-            rgb_to_gray = {g,g,g};
+            y_to_rgb = {y,y,y};
         end
     endfunction
-
-    function [7:0] rgb_to_y8;
-        input [23:0] px;
-        begin
-            rgb_to_y8 = {2'b0,px[23:18]} + {1'b0,px[15:9]} + {2'b0,px[7:2]};
-        end
-    endfunction
-
-    wire [95:0] gray_comb = { rgb_to_gray(S_rgb_data[95:72]),
-                              rgb_to_gray(S_rgb_data[71:48]),
-                              rgb_to_gray(S_rgb_data[47:24]),
-                              rgb_to_gray(S_rgb_data[23:0]) };
 
     // ==================================================================
     // 波普风格（扩展要求 1）：抽取为 isp_pop96，设计与单元测试共用
@@ -643,8 +682,11 @@ awb #(
     // 套印历史在模块内部按 valid 推进并在行首/帧首清零。
     // 顶层选择 pop_d1（见下方 sel_data），与 raw_d2/gray_d2 及
     // raw_v2/u2/l2 严格同拍。
+    // 亮度档改为吃共享组合 Y（S_y4_comb 与 S_rgb_data 同拍），色相仍用
+    // I_tdata 的 RGB；两者同拍，所以 POP 的像素与基线逐位相同。
     isp_pop96 #(
-        .HUE_AWARE (POP_HUE_AWARE)
+        .HUE_AWARE     (POP_HUE_AWARE),
+        .USE_SHARED_Y  (1'b1)
     ) u_pop96 (
         .I_clk    (axi4s_video_aclk),
         .I_rst_n  (I_rst_n),
@@ -652,6 +694,7 @@ awb #(
         .I_tuser  (S_rgb_tuser),
         .I_tlast  (S_rgb_tlast),
         .I_tdata  (S_rgb_data),
+        .I_y4     (S_y4_comb),
         .I_pal    (S_pal),
         .O_tdata  (pop_comb)
     );
@@ -1543,13 +1586,21 @@ awb #(
     //   判据位只在 pass=1 或 cand=1 时有效；两者都为 0 时只表示
     //   "有/无连通域(live)、是否标签溢出(ovf)"，不能据此声称具体失败原因。
 
-    reg [95:0] raw_d1, raw_d2, gray_d1, gray_d2, pop_d1, pop_d2;
+    reg [95:0] raw_d1, raw_d2, pop_d1, pop_d2;
+    reg [31:0] S_y4_d2;          // 共享 Y 的第 2 拍，供 GRAY 显示
     reg        raw_v1, raw_v2, raw_u1, raw_u2, raw_l1, raw_l2;
+
+    // GRAY 显示：把共享 Y 再打一拍（tap 已打 1 拍，合计 2 拍），
+    // 然后组合复制成 {Y,Y,Y}。与基线的 gray_d1/gray_d2 同拍同值。
+    wire [95:0] S_gray_disp = { y_to_rgb(S_y4_d2[31:24]),
+                                y_to_rgb(S_y4_d2[23:16]),
+                                y_to_rgb(S_y4_d2[15:8]),
+                                y_to_rgb(S_y4_d2[7:0]) };
 
     always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
         if(!I_rst_n) begin
             raw_d1  <= 96'd0; raw_d2  <= 96'd0;
-            gray_d1 <= 96'd0; gray_d2 <= 96'd0;
+            S_y4_d2 <= 32'd0;
             pop_d1  <= 96'd0; pop_d2  <= 96'd0;
             raw_v1 <= 1'b0; raw_v2 <= 1'b0;
             raw_u1 <= 1'b0; raw_u2 <= 1'b0;
@@ -1557,7 +1608,7 @@ awb #(
         end
         else begin
             raw_d1  <= S_rgb_data;   raw_d2  <= raw_d1;
-            gray_d1 <= gray_comb;     gray_d2 <= gray_d1;
+            S_y4_d2 <= S_y4_r;
             pop_d1  <= pop_comb;      pop_d2  <= pop_d1;
             raw_v1  <= S_rgb_valid;  raw_v2  <= raw_v1;
             raw_u1  <= S_rgb_tuser;   raw_u2  <= raw_u1;
@@ -1577,7 +1628,8 @@ awb #(
                 sel_last  = edge_O_tlast;
             end
             2'd2: begin
-                sel_data  = gray_d2;
+                // 共享 Y + 第 2 拍寄存器，和基线 gray_d1/gray_d2 同拍同值
+                sel_data  = S_gray_disp;
                 sel_valid = raw_v2;
                 sel_user  = raw_u2;
                 sel_last  = raw_l2;

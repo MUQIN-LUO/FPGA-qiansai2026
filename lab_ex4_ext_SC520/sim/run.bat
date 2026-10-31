@@ -54,14 +54,20 @@ vsim -c -quiet tb_det_result -do "run -all; quit -f" -l logs\tb_det_result.log
 
 echo === tb_det_frontend_awb (early tuser / circle / FIFO recovery) ===
 vlog -quiet %R%\awb.v %I%\awb\divider\divider_gate.v %I%\awb\signal_delay.v ^
-    tb\blk_mem_gen_awb_delay_signal.v %I%\edge_detect_96.v %I%\isp_shape_circle.v ^
-    %I%\isp_mask_fifo.v %I%\isp_ccl_circle.v %I%\isp_ccl_bridge.v tb\tb_det_frontend_awb.v
+    tb\blk_mem_gen_awb_delay_signal.v %I%\edge_detect_y96.v %I%\edge_detect_96.v ^
+    %I%\isp_shape_circle.v %I%\isp_mask_fifo.v %I%\isp_ccl_circle.v ^
+    %I%\isp_ccl_bridge.v tb\tb_det_frontend_awb.v
 vsim -c -quiet tb_det_frontend_awb -do "run -all; quit -f" -l logs\tb_det_frontend_awb.log
 
 echo === tb_frontend (real line burst / blanking) ===
 vlog -quiet %I%\isp_ccl_circle.v %I%\isp_mask_fifo.v %I%\isp_ccl_bridge.v ^
-    %I%\isp_shape_circle.v %I%\edge_detect_96.v tb\tb_frontend.v
+    %I%\isp_shape_circle.v %I%\edge_detect_y96.v %I%\edge_detect_96.v tb\tb_frontend.v
 vsim -c -quiet tb_frontend -do "run -all; quit -f" -l logs\tb_frontend.log
+
+echo === tb_gray_share (shared Y: gray/EDGE/POP/detection stream) ===
+vlog -quiet %I%\isp_gray_share96.v %I%\edge_detect_y96.v %I%\edge_detect_96.v ^
+    %I%\isp_pop96.v tb\tb_gray_share.v
+vsim -c -quiet tb_gray_share -do "run -all; quit -f" -l logs\tb_gray_share.log
 
 echo.
 echo ============================================
