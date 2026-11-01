@@ -599,3 +599,40 @@ HUD 把 `O_det_flags` 显示为两个十六进制半字节，位义仍是
 - 37 个输入端口无 input delay、68 个输出端口无 output delay —— 与第一阶段
   **数量完全相同**。
 - TD 6.2 不支持 `report_timing -unconstrained`（USR-8011），故以 check_timing 为准。
+
+## 10. 交付记录（2026-11-01 深夜）
+
+### 10.1 工程默认约束入口
+
+- `td_project/camera_to_dsi_display.al` 的 `constraint_1` 的 `SDC_FILE`
+  已改为 **`camera_to_dsi_display_evt.sdc`**（与 isp_top 默认 `EVT_CIRCLE=1`
+  一致），避免“直接打开工程新建 run 却加载旧约束”的风险。
+- 原 `camera_to_dsi_display.sdc` 仍保留在工程目录，仅用于 EVT_CIRCLE=0。
+- **显式切换步骤（EVT_CIRCLE=0 / 第一阶段路径）**：
+  1. 把 `isp_top.v` 的 `parameter EVT_CIRCLE` 改为 `1'b0`；
+  2. 把 `.al` 中 `constraint_1` 的 `SDC_FILE/<File Path>` 从
+     `camera_to_dsi_display_evt.sdc` 改为 `camera_to_dsi_display.sdc`；
+  3. 重新创建 run。
+  （TD 6.2 的 `.al` 解析不接受 XML 注释，故切换说明只在本报告与
+  `sim/PHASE2_TESTS.md` 记录，不写进 XML。）
+
+### 10.2 干净工程验证（不依赖手工改 settings.cfg）
+
+在 `D:\FPGA\phase2_cleancheck` 复制工程、删除已有 run、用 `launch_runs`
+让 TD 自行生成 run 目录与 `settings.cfg`：
+- TD 生成的 `SDCList` = `../../camera_to_dsi_display_evt.sdc`（来自 `.al`）；
+- 综合日志实际执行 `read_sdc ../../camera_to_dsi_display_evt.sdc`，
+  约束失败/告警 **0**；
+- 结果与最终构建一致：ERAM 85、DSP 27、`#slice*` 16,640 vs 16,649（0.05%）、
+  LUT 16,660 vs 16,574（0.5%，综合随机性）、WNS +0.300 vs +0.257（均为正）。
+  → `.al` 改动只改变约束文件入口，RTL 未变，实际约束与最终构建等价，
+  **保留 bit `78bced1a…846189`，不重建**。
+
+### 10.3 提交与推送
+
+- 分支：`feat/phase2-circle`（基于 `e99980a` = `origin/main`，**未动 main**）。
+- 提交：`64d1bd2 experiment(phase2): sparse-event circle detector rev2f + EVT constraint set`
+  （37 个文件，仅第二阶段源码/约束/测试/模型/报告；不含日志、work、bit）。
+- 推送：`git push -u origin feat/phase2-circle`（非强推，新远程分支
+  `origin/feat/phase2-circle`）。GitHub 提示可开 PR；本会话未创建 PR。
+- `D:\FPGA\project` 工作区未被写入（其原有未提交修改保持原样）。
