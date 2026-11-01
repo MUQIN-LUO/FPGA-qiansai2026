@@ -173,7 +173,12 @@ module isp_top #(
     //   0 = 灰度世界自动白平衡（默认，用于 RAW 彩色显示）
     //   1 = 原来的白纸一键标定（保留为备用模式）
     // 两种来源写的是同一组"请求增益"寄存器，只有一个 always 块拥有它们。
-    parameter        AWB_MODE     = 1'b0
+    parameter        AWB_MODE     = 1'b0,
+    // ---- phase-2 sparse-event circle detector (research switch) ----
+    //   1 = O_det_* driven by isp_grad_event96 + isp_circle_hough2;
+    //   0 = first-stage CCL/shape path (both are synthesised, mux only).
+    //   Default 1 only for this round's resource/timing evaluation. Not flashed.
+    parameter        EVT_CIRCLE   = 1'b1
 ) (
     input 			axi4s_video_aclk,
     input 			I_ccl_src_clk,   // 50 MHz 系统时钟（与 MIPI 异步），供 CCL 域使用
@@ -1555,6 +1560,13 @@ awb #(
     wire [5:0]  S_det_crit_w = { S_shape_ovf, S_shape_live,
                                  S_shape_ok_chord, S_shape_ok_rows,
                                  S_shape_ok_asp, S_shape_ok_size };
+    // keep: the phase-1 CCL path must stay in the netlist even when the
+    // sticky select has folded to the event detector (SDC references ccl_clk).
+    wire [11:0] S_ccl_minx, S_ccl_maxx, S_ccl_miny, S_ccl_maxy;
+    wire [7:0]  S_ccl_flags;
+    wire [9:0]  S_ccl_cnt;
+    wire        S_ccl_det_valid, S_ccl_det_cand;
+
     isp_det_result u_det_result (
         .I_clk    (axi4s_video_aclk),
         .I_rst_n  (I_rst_n),
@@ -1568,18 +1580,93 @@ awb #(
         .I_cnt    (S_det_cnt_w),
         .I_minx   (M_minx), .I_maxx(M_maxx),
         .I_miny   (M_miny), .I_maxy(M_maxy),
-        .O_valid  (O_det_valid),
-        .O_cand   (O_det_cand),
-        .O_minx   (O_det_minx), .O_maxx(O_det_maxx),
-        .O_miny   (O_det_miny), .O_maxy(O_det_maxy),
+        .O_valid  (S_ccl_det_valid),
+        .O_cand   (S_ccl_det_cand),
+        .O_minx   (S_ccl_minx), .O_maxx(S_ccl_maxx),
+        .O_miny   (S_ccl_miny), .O_maxy(S_ccl_maxy),
         .O_conf   (S_det_conf_w),
-        .O_flags  (O_det_flags),
-        .O_cnt    (O_det_cnt),
+        .O_flags  (S_ccl_flags),
+        .O_cnt    (S_ccl_cnt),
         .O_pass   (S_det_pass_w),
         .O_size_ok(S_det_size_w),
         .O_cand_d (S_det_cand_d_w),
         .O_evt    (S_det_evt_w)
     );
+
+    // ------------------------------------------------------------------
+    // Phase-2 sparse-event circle detector on the shared O_dg grayscale tap.
+    // Runs in parallel with the phase-1 CCL path; EVT_CIRCLE muxes O_det_*.
+    // ------------------------------------------------------------------
+    wire        S_ev_ok, S_ev_start, S_ev_end, S_ev_ok_v;
+    wire [11:0] S_ev_x, S_ev_y, S_ev_cx, S_ev_cy, S_ev_r;
+    wire [11:0] S_ev_minx, S_ev_maxx, S_ev_miny, S_ev_maxy;
+    wire signed [9:0] S_ev_ux, S_ev_uy;
+    wire [3:0]  S_ev_sec;
+    wire [7:0]  S_ev_flags;
+    wire [15:0] S_ev_score;
+    wire [11:0] S_ev_cnt;
+
+    isp_grad_event96 u_evt_fe (
+        .clk            (axi4s_video_aclk),
+        .rst_n          (I_rst_n),
+        .I_y4           (S_y4_r),
+        .I_valid        (S_yv),
+        .I_tuser        (S_yu_det),
+        .I_tlast        (S_yl),
+        .I_x            (S_yx),
+        .I_y            (S_yy),
+        .O_ev_valid     (S_ev_ok),
+        .O_ev_x         (S_ev_x),
+        .O_ev_y         (S_ev_y),
+        .O_ev_ux        (S_ev_ux),
+        .O_ev_uy        (S_ev_uy),
+        .O_ev_sector    (S_ev_sec),
+        .O_frame_start  (S_ev_start),
+        .O_frame_end    (S_ev_end)
+    );
+
+    isp_circle_hough2 u_evt_circle (
+        .clk            (axi4s_video_aclk),
+        .rst_n          (I_rst_n),
+        .ev_valid       (S_ev_ok),
+        .ev_x           (S_ev_x),
+        .ev_y           (S_ev_y),
+        .ev_ux          (S_ev_ux),
+        .ev_uy          (S_ev_uy),
+        .ev_sector      (S_ev_sec),
+        .frame_start    (S_ev_start),
+        .frame_end      (S_ev_end),
+        .O_evt          (),
+        .O_valid        (S_ev_ok_v),
+        .O_cx           (S_ev_cx), .O_cy(S_ev_cy), .O_r(S_ev_r),
+        .O_minx         (S_ev_minx), .O_maxx(S_ev_maxx),
+        .O_miny         (S_ev_miny), .O_maxy(S_ev_maxy),
+        .O_flags        (S_ev_flags),
+        .O_score        (S_ev_score),
+        .O_count_dbg    (S_ev_cnt)
+    );
+
+    // EVT_CIRCLE=1: the event detector replaces the phase-1 CCL/shape
+    // detector (the CCL path is then optimised away; use the phase-2 SDC
+    // without the ccl_clk domain).  EVT_CIRCLE=0 keeps phase 1 exactly.
+    // Both paths cannot coexist: the CCL path alone costs ~8k slices and
+    // phase 1 already uses 92.6% of the device.
+    assign O_det_valid = EVT_CIRCLE ? S_ev_ok_v : S_ccl_det_valid;
+    assign O_det_cand  = EVT_CIRCLE ? 1'b0     : S_ccl_det_cand;
+    assign O_det_minx  = EVT_CIRCLE ? S_ev_minx : S_ccl_minx;
+    assign O_det_maxx  = EVT_CIRCLE ? S_ev_maxx : S_ccl_maxx;
+    assign O_det_miny  = EVT_CIRCLE ? S_ev_miny : S_ccl_miny;
+    assign O_det_maxy  = EVT_CIRCLE ? S_ev_maxy : S_ccl_maxy;
+    // HUD layout is unchanged: {ovf,live,chord,rows,asp,size,pass,valid}.
+    // The event detector maps only the bits that exist for it:
+    //   [7] ovf  = drop_seen | proc_drop   (frame dropped / processed overflow)
+    //   [6] live = event count != 0
+    //   [5:2]    = 0 (chord/rows/asp/size are CCL-specific)
+    //   [1] pass = best_ok, [0] valid = O_valid
+    assign O_det_flags = EVT_CIRCLE ?
+        {(S_ev_flags[3] | S_ev_flags[2]), (S_ev_cnt != 12'd0), 4'b0000,
+         S_ev_flags[0], S_ev_ok_v} : S_ccl_flags;
+    assign O_det_cnt   = EVT_CIRCLE ? S_ev_cnt[9:0] : S_ccl_cnt;
 
     // 圆形诊断（板测 HUD）：
     //   flags = {ovf,live,chord,rows,asp,size,pass,valid}
