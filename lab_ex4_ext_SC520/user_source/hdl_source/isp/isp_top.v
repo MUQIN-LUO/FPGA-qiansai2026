@@ -200,6 +200,9 @@ module isp_top #(
     // OSD to print the signed offset from the image centre (640,360).
     output wire [11:0] O_det_cx		,
     output wire [11:0] O_det_cy		,
+    // Optional green label: tracked ball interior is chromatically green.
+    // Detection itself remains colour-agnostic.
+    output wire        O_det_green	,
     output wire        O_det_valid	,   // 尺寸+形状 全部通过（迟滞点亮的绿色状态）
     output wire        O_det_cand	,   // 本帧尺寸通过、形状未过（橙色候选）
     // EVT_CIRCLE=1: processed-frame event count, saturated to 0..999 (HUD
@@ -1645,7 +1648,7 @@ awb #(
         .ev_sector      (S_ev_sec),
         .frame_start    (S_ev_start),
         .frame_end      (S_ev_end),
-        .O_evt          (),
+        .O_evt          (S_ev_evt),
         .O_valid        (S_ev_ok_v),
         .O_cx           (S_ev_cx), .O_cy(S_ev_cy), .O_r(S_ev_r),
         .O_minx         (S_ev_minx), .O_maxx(S_ev_maxx),
@@ -1655,23 +1658,79 @@ awb #(
         .O_count_dbg    (S_ev_cnt)
     );
 
+    // ------------------------------------------------------------------
+    // Cross-frame association + bounded hold (EVT path only).
+    //   det_pass uses the core's fresh-pass bit, so the core's own 2-frame
+    //   hold is NOT counted as a detection.  The tracker's display valid
+    //   includes its own bounded hold; the HUD pass bit remains 0 then.
+    // ------------------------------------------------------------------
+    wire S_ev_pass = S_ev_ok_v && S_ev_flags[0];
+    wire S_trk_valid, S_trk_hold, S_trk_stable, S_trk_ok, S_trk_green;
+    wire S_trk_id_chg;
+    wire [11:0] S_trk_cx, S_trk_cy, S_trk_r;
+    wire [11:0] S_trk_minx, S_trk_maxx, S_trk_miny, S_trk_maxy;
+    wire S_green_now;
+
+    isp_ball_track #(
+        .IMG_W (1280), .IMG_H (720)
+    ) u_ball_track (
+        .clk            (axi4s_video_aclk),
+        .rst_n          (I_rst_n),
+        .cam_frame_start(S_ev_start),   // every camera frame, incl. skips
+        .det_evt        (S_ev_evt),
+        .det_pass       (S_ev_pass),
+        .det_cx         (S_ev_cx), .det_cy(S_ev_cy), .det_r(S_ev_r),
+        .det_minx       (S_ev_minx), .det_maxx(S_ev_maxx),
+        .det_miny       (S_ev_miny), .det_maxy(S_ev_maxy),
+        .green_in       (S_green_now),
+        .out_valid      (S_trk_valid),
+        .out_hold       (S_trk_hold),
+        .out_stable     (S_trk_stable),
+        .out_track_ok   (S_trk_ok),
+        .out_id_chg     (S_trk_id_chg),
+        .out_cx         (S_trk_cx), .out_cy(S_trk_cy), .out_r(S_trk_r),
+        .out_minx       (S_trk_minx), .out_maxx(S_trk_maxx),
+        .out_miny       (S_trk_miny), .out_maxy(S_trk_maxy),
+        .out_green      (S_trk_green)
+    );
+
+    isp_green_sample #(
+        .IMG_W (1280), .IMG_H (720)
+    ) u_green_sample (
+        .clk            (axi4s_video_aclk),
+        .rst_n          (I_rst_n),
+        .beat_valid     (S_det_vq),
+        .beat_x         (S_xq),
+        .beat_y         (S_yq),
+        .beat_r         (S_beatq_r),
+        .beat_g         (S_beatq_g),
+        .beat_b         (S_beatq_b),
+        .trk_cx         (S_trk_cx),
+        .trk_cy         (S_trk_cy),
+        .trk_r          (S_trk_r),
+        .trk_ok         (S_trk_ok),
+        .id_chg         (S_trk_id_chg),
+        .green          (S_green_now)
+    );
+
     // EVT_CIRCLE=1: the event detector replaces the phase-1 CCL/shape
     // detector (the CCL path is then optimised away; use the phase-2 SDC
     // without the ccl_clk domain).  EVT_CIRCLE=0 keeps phase 1 exactly.
     // Both paths cannot coexist: the CCL path alone costs ~8k slices and
     // phase 1 already uses 92.6% of the device.
-    assign O_det_valid = EVT_CIRCLE ? S_ev_ok_v : S_ccl_det_valid;
+    assign O_det_valid = EVT_CIRCLE ? S_trk_valid : S_ccl_det_valid;
     assign O_det_cand  = EVT_CIRCLE ? 1'b0     : S_ccl_det_cand;
-    assign O_det_minx  = EVT_CIRCLE ? S_ev_minx : S_ccl_minx;
-    assign O_det_maxx  = EVT_CIRCLE ? S_ev_maxx : S_ccl_maxx;
-    assign O_det_miny  = EVT_CIRCLE ? S_ev_miny : S_ccl_miny;
-    assign O_det_maxy  = EVT_CIRCLE ? S_ev_maxy : S_ccl_maxy;
-    // Same result group as the bbox: EVT uses the fitted centre, CCL the
-    // centre of its bbox (the CCL path has no separate centre output).
-    assign O_det_cx    = EVT_CIRCLE ? S_ev_cx :
+    assign O_det_minx  = EVT_CIRCLE ? S_trk_minx : S_ccl_minx;
+    assign O_det_maxx  = EVT_CIRCLE ? S_trk_maxx : S_ccl_maxx;
+    assign O_det_miny  = EVT_CIRCLE ? S_trk_miny : S_ccl_miny;
+    assign O_det_maxy  = EVT_CIRCLE ? S_trk_maxy : S_ccl_maxy;
+    // Same result group as the bbox: EVT uses the tracker's last fresh centre;
+    // CCL uses the centre of its bbox (no separate centre output).
+    assign O_det_cx    = EVT_CIRCLE ? S_trk_cx :
                          ((S_ccl_minx + S_ccl_maxx) >> 1);
-    assign O_det_cy    = EVT_CIRCLE ? S_ev_cy :
+    assign O_det_cy    = EVT_CIRCLE ? S_trk_cy :
                          ((S_ccl_miny + S_ccl_maxy) >> 1);
+    assign O_det_green = EVT_CIRCLE ? S_trk_green : 1'b0;
     // HUD layout is unchanged: {ovf,live,chord,rows,asp,size,pass,valid}.
     // The event detector has no chord/rows/asp/size criteria; its four free
     // positions are used for independent diagnostics, and the processed-frame
@@ -1688,7 +1747,9 @@ awb #(
     isp_evt_hud_map u_evt_hud_map (
         .I_flags (S_ev_flags),
         .I_cnt   (S_ev_cnt),
-        .I_valid (S_ev_ok_v),
+        // display valid (includes tracker hold); pass bit [1] still comes
+        // from the core's fresh-pass flag, so a hold shows pass=0/valid=1
+        .I_valid (S_trk_valid),
         .O_flags (S_ev_hud_flags),
         .O_cnt   (S_ev_hud_cnt)
     );

@@ -464,3 +464,99 @@ EVT SDC, sequential syn then P&R:
   (not flashed; all older bits preserved).
 - No changes to the circle detector, R_MIN/EVMAX/thresholds, exposure,
   POP/AWB/AE in this round.
+
+## rev 2l — cross-frame ball tracking + GREEN + runtime DD:HH:MM:SS
+
+Scope: detector core, R_MIN/EVMAX/thresholds, exposure, POP/AWB/AE are
+unchanged.  New CSI-domain tracker/colour sampler, wrapper green CDC bit,
+runtime RTC + OSD.
+
+### Unit tests (all PASS)
+
+- `tb_ball_track.v` (MS_DIV=10 scaled, HOLD_FRAMES=4,
+  HOLD_TIMEOUT_MS=200): 10 consecutive detections -> stable; miss -> hold;
+  hold expires after **4 real camera-frame pulses** and clears; hold does
+  not count as a detection; far detection ignored during hold; global
+  recovery after expiry; radius +20% normal / +31% relaxed / +50% hold;
+  position relaxed twice then hold; fast reacquire; no-frame stall clears
+  via the 200 ms timeout; reset.
+- **Stability gate is separate from the motion gate.**  The 10-frame
+  counter uses a candidate **anchor** (first detection): position <=16 px
+  and radius <=~10%+2.  A detection still inside the 1.5r+16 motion gate
+  but outside the anchor window re-anchors and resets the count to 1 while
+  tracking continues.  Tests: +5 px per detection for 20 detections
+  (each step inside the motion gate, total 100 px) -> `stable=0` and still
+  displayed; stop + 10 static -> stable; 5 static + a 20 px jump (outside
+  16 px anchor, inside 106 px motion) -> count reset/stable=0 but still
+  tracked, then 10 static -> stable.  All PASS.
+- **Target-identity colour isolation.**  The tracker forces `out_green=0`
+  and emits `out_id_chg` on a new candidate, a motion-gate restart, an
+  anchor reset, or a relaxed jump outside the tight colour gate
+  (position <=16 px, radius <=~10%+2).  Tests: stable green -> red target
+  150 px away (inside the relaxed 182 px motion gate, outside the 16 px
+  colour gate, with `green_in` deliberately still 1) -> `out_green=0`
+  immediately while still tracked; red samples stay 0; a green target at
+  the new position re-confirms GREEN.  During a hold the old green box
+  keeps its GREEN (same target); after the 4-frame hold the far new target
+  starts with GREEN cleared.  PASS.
+- `tb_green_sample.v`: `id_chg` clears GREEN, a mid-sample identity change
+  aborts the in-flight sample, and an invalid edge grid clears GREEN
+  instead of retaining the old value.  PASS.
+
+**Frame-rate / clock / core-hold verification.**  The SC520 config table
+header is `1280x720@60fps, 24MHz MCLK, 2-Lane RAW10`; the HUD `FPS:60`
+is the ISP-tuser count, and the SDC/timing report says
+`MIPI_RX_BYTE_CLK = 103.520 MHz` (`MS_DIV=103520` is correct).  The photo's
+`RAW 30` is the mode row (RAW + calibration status/blank), not the frame
+rate.  The hold now counts 4 real camera frames from `O_frame_start`
+(67 ms at 60 fps, 133 ms if the sensor were 30 fps), plus a 200 ms hard
+timeout, so it is independent of the frame-rate assumption.  The core's
+internal `HOLD=2` frames have `O_flags[0]=0`; the tracker uses only
+`O_valid && O_flags[0]`, so stale core holds are not counted, do not
+refresh `last_frame/last_ms`, and the display valid comes only from the
+tracker - no extra clear delay.
+- `tb_green_sample.v`: user HUD samples (12,23,17)/(22,45,35)/(15,30,22)
+  are GREEN; (10,10,10)/(10,13,10)/(10,20,25)/(1,3,1) are not; 2-sample
+  hysteresis; track loss clears GREEN.
+- `tb_rtc_cdc.v` (CLK_DIV=20 scaled, asynchronous clocks): 58->59,
+  59->00 minute carry, 23:59:59 -> day+1 00:00:00, saturation at
+  99:23:59:59, coherent group, reset clears.
+- `tb_circle_text.v`: dynamic 18/24-char CIRCLE (GREEN only when
+  I_det_green=1), positive/negative/zero, four corners, 8 px glyph,
+  green+black outline/alignment, valid=0 removal, A(GREEN)->B(non-green)
+  ->invalid multi-frame; runtime 01:02:03:04 colon/position, box-over-
+  runtime conflict with coherent fields.  PASS.
+
+### Interface/timing notes
+
+- Colour: `S_beatq_r/g/b` = 4-pixel sum, **post-AWB / pre-gamma** 8-bit
+  RGB, same data as the HUD centre ROI; 16-beat (64 px) interior grid.
+- Detection: `O_evt` = core S_DONE; `O_flags[0]=pass` only for a fresh
+  detection; the core's own hold is not counted.
+- `O_det_green` joins the existing S_hdmi_user bbox/cx/cy/valid CDC group.
+- Runtime: 50 MHz fixed divider, 1 Hz; `{day,hour,min,sec}` moved as one
+  group with a request/ack toggle to the HDMI pixel clock.
+
+### Build (rev 2l)
+
+Fresh tree `D:\FPGA\phase2_build_20261105`, final RTL/SDC snapshot
+(`diff -rq` verified), EVT SDC, sequential syn then P&R:
+- Syn: WNS +0.212 ns, hold +0.114 ns, ERAM 86/108, DSP 27/40,
+  LUT6 10,512; critical path `u_ball_track/out_green_reg`.
+- First P&R without the RTC CDC exception: setup +0.162 ns but
+  **hold -0.668 ns** on `u_rtc/ack -> sn_day` (50 MHz <-> HDMI CDC).
+  That bit is not delivered.
+- Added targeted `set_false_path` through `u_rtc/*` between
+  `sys_clk_50m` and `HDMI_PIXEL_CLK` in both SDCs (2FF + req/ack
+  handshake; snapshot stable until ack).  This is a constraint fix, not
+  a functional change.
+- Final P&R: setup WNS +0.110 ns, TNS 0; hold WNS +0.020 ns, 0
+  violations; slices 18,999/21,216 (89.55%), LUT6 18,461/21,216
+  (87.01%), ERAM 86/108, DSP 27/40.  Critical path is the existing
+  `u_evt_circle/u_acc` RAM read.
+- Unconstrained profile unchanged (1 I2C no-clock root, 37/68 IO
+  delays, 4 dangling, 0 invalid).
+- Final bit `camera_to_dsi_display_phase2_track.bit`, SHA256
+  `05d906fa91daa6ba03fcc1825f793848551d5562604635813e952def4f4f119a`
+  (not flashed; older bits preserved).  Resource headroom ~10%;
+  future logic additions need a new timing/resource check.

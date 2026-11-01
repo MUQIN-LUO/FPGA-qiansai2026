@@ -1114,3 +1114,145 @@ L:  ##......    E:  .######.    X:  .##..##.    Y:  .##..##.
 
 本轮**未修改**圆形检测、R_MIN/EVMAX/阈值、曝光、POP/AWB/AE；只改
 `hdmi_mixer.v` 的文字字模/尺寸和测试。
+
+## 16. 运动小球跟踪 + GREEN + 运行时长（2026-11-01 夜，rev 2l）
+
+基线 5ac964b。识别核心（半径门限/形状门限）不变；本轮在 CSI 域新增
+跨帧跟踪、球内颜色采样、GREEN 标签与右下角运行时 OSD。
+
+### 16.1 接口/时序核对（实现前）
+
+- **颜色域**：`S_det_data = S_rgb_data` 是 **AWB 后、gamma 前** 的
+  8-bit R/G/B（每像素 `{R,G,B}`）；`S_beatq_r/g/b` 是 4 像素/拍的
+  通道和（10-bit），与坐标 `S_xq/S_yq` 同拍；HUD 中心 64x64 均值
+  `O_rgb_*` 用的就是同一组数据。用户照片 HUD 的 R012G023/B017 等
+  就是这个域的 8-bit 均值，不是显示 gamma 后的值。
+- **检测结果**：`isp_circle_hough2.O_evt` 在每处理帧 `S_DONE` 出一拍；
+  `O_flags[0]=pass` 只在**本帧真正检出**时为 1，检测器自身 hold 时为 0。
+  跟踪器只把 `O_valid && O_flags[0]` 当作新鲜检测，检测器旧 hold 不计数。
+- **快照**：`O_det_green` 与 bbox/cx/cy/valid 一起进入 wrapper 的
+  `S_hdmi_user` staging→snapshot→receive→display 整组 CDC，同帧显示。
+- **运行时**：源域固定 50 MHz（`I_sys_clk`），不依赖视频帧率；目标域
+  HDMI 像素时钟；整组 `{DD,HH,MM,SS}` 用 request/ack toggle 原子搬运。
+
+### 16.2 跟踪器 `isp_ball_track.v`
+
+- **运动关联门限**（跟踪用）：与上一帧比，位置
+  `|dx|,|dy| <= 1.5r+16`；半径 `|dr| <= 0.20r+2`。
+- **十次小范围稳定门限**（与运动门限分开）：候选开始时锁存**起始锚点**
+  `(acx,acy,ar)`；每次检测还必须落在锚点小窗口
+  `|dcx|,|dcy| <= 16px`、`|dr| <= 约10%r+2` 内才计入连续 10 次。
+  若检测仍在运动门限内但出了锚点窗口（缓慢漂移），**重新锚定并把连续
+  计数重置为 1**，跟踪/显示继续，但不会累计到 stable；因此连续漂移
+  不能触发“静止稳定”。只有真正静止/小幅抖动才能 `stable=1`。
+  候选期（未稳定）漏检立即清除，不做保持。
+- 稳定后短暂漏检：保留**最后一次新鲜检测**的框/中心/半径，绿色原亮度。
+  保持时间用**真实相机帧计数**（`cam_frame_start`，来自
+  `isp_grad_event96.O_frame_start`，每帧一次，跳过的帧也计数）：
+  `HOLD_FRAMES=4`，即 60fps≈67ms、若传感器改 30fps≈133ms；另加
+  `HOLD_TIMEOUT_MS=200`（CSI 时钟 ms 计数）硬超时，防止相机停流时
+  无限保持。保持期间不计数、不刷新自身（不更新 `last_frame/last_ms`），
+  `O_flags[0]` 仍为 0。
+- **帧率/时钟核实**：SC520 配置表头明确 `1280x720@60fps, 24MHz MCLK,
+  2-Lane RAW10`；HUD `FPS:60` 来自 `S_ISP_O_tuser` 的 0.5s 帧计数；
+  SDC/时序报告 `MIPI_RX_BYTE_CLK=103.520MHz`，`MS_DIV=103520` 正确。
+  照片里的 `RAW 30` 是模式行（RAW + 标定状态/空白），不是帧率。
+- **内部 HOLD=2 核实**：tracker 只用 `O_valid && O_flags[0]` 作为新鲜
+  检测；检测器自己的 hold 拍 `flags[0]=0`，因此不会被当成新检测，
+  不会更新 `last_frame/last_ms`、不计数、不刷新 hold。显示 valid 完全
+  来自 tracker；检测器 hold 不会额外延迟清框。
+- **颜色身份隔离**：对每次新鲜检测再算 `color_ok`（相对当前框，
+  位置 ±16px、半径约 10%+2）。以下情况 `out_green` 强制 0，并输出
+  一拍 `out_id_chg` 让采样器清旧 green：S_IDLE→新候选、S_CAND 运动
+  门限失败、S_CAND 锚点重置、S_TRK 放宽跳变超出 `color_ok`。
+  因此旧绿球的 GREEN 不会带到新目标；hold 期间保持的是同一目标，
+  GREEN 保留；hold 到期后的新目标从 green=0 开始。
+- 有限放宽：稳定后超出正常门限但在 `2.5r+32 / 40%r+4` 内最多接受
+  `RELAX_MAX=2` 次；再超出则进入 hold，不抢锁。
+- hold 到期→IDLE；之后任意新鲜检测都可作为新候选（全局恢复），
+  重新累计 10 次；hold 期间远处背景检测被忽略，避免背景抢锁。
+- 输出显示框/中心/半径/bbox/valid/hold/stable/green；`out_valid` 包含
+  hold，`out_green` 仅锁存最后一次新鲜检测的颜色结果。
+
+### 16.3 颜色采样 `isp_green_sample.v`
+
+- 以跟踪器最后一次新鲜框为中心，在球内 `±r/2, ±r/4` 的 4x4=16 个
+  4px 拍（64 像素）做区域采样；帧首锁存网格，帧尾求平均（Σ>>6）。
+- 判定（候选阈值，需板测）：`G>R`、`G>=B+2`、`(G-R)*8 >= R+G+B`、
+  `G>=6`；对用户 HUD 样本 `12,23,17 / 22,45,35 / 15,30,22` 均为
+  green；`10,10,10 / 10,13,10 / 10,20,25 / 1,3,1` 均不 green。
+- 2 次 green 置位、2 次非 green 清除；无跟踪时不采样并清 green。
+- `id_chg`（tracker 身份更换脉冲）立即清 green/green_cnt 并中止当前帧
+  采样；帧尾若网格无效或不足 16 点，清 green（不保留旧值），覆盖
+  “采样中途换目标”和“边缘采样无效”两种情况。
+- 该标签只影响 `GREEN` 文字，不参与识别/valid。
+
+### 16.4 OSD
+
+- CIRCLE 文字：非绿色 18 字符 `CIRCLE X+123 Y-045`（180x10）；绿色时
+  动态扩展为 24 字符 `CIRCLE GREEN X+123 Y-045`（240x10），仍居中/夹紧
+  防裁切；8px 字高、绿色+黑描边、同帧、valid=0 消失。
+- 运行时长：右下角固定 `DD:HH:MM:SS`，与左上 HUD 同 7 行字模 ×3
+  （30px 单元），绿色+黑描边；位置 x=926,y=666；冒号用 glyph 3；
+  字模位序与 HUD 相同（LSB-左）。优先级最低：框/文字/Logo 覆盖处让位。
+- 计时：50 MHz 固定分频 1 Hz；秒/分/时/日进位，`99:23:59:59` 饱和；
+  复位清零；整组 CDC 原子。
+
+### 16.5 有界仿真
+
+- `tb_ball_track.v`（MS_DIV=10 缩放、HOLD_FRAMES=4、HOLD_TIMEOUT_MS=200）：
+  10 次稳定、4 个真实相机帧后 hold 到期清除、hold 不算检测、hold 中
+  远目标被忽略、全局恢复、半径 20%/31%/50% 边界、位置放宽 2 次后 hold、
+  快速再捕获、无帧停流时 200ms 硬超时清除、复位。
+  **新增稳定性门限证据**：每次 +5px 连续漂移 20 次（每步都在
+  1.5r+16 运动门限内、总位移 100px）→ `stable=0` 且仍显示；
+  停住后 10 次静止 → `stable=1`；5 次静止后跳 20px（>16px 锚点、
+  <106px 运动门限）→ 计数重置为 1、仍跟踪，再 9 次静止 → stable。
+  PASS。
+- `tb_ball_track.v` 目标切换颜色：绿球稳定（green=1）→ 150px 外红球
+  （在 relaxed 运动门限内、超出 16px 颜色身份门限，且故意保持
+  green_in=1）→ `out_green` 立即 0、仍跟踪；红样本保持 0；新位置
+  绿球重新 GREEN。hold 中远目标被忽略、旧绿框 GREEN 保留；hold 到期
+  后新远目标以 green=0 开始。PASS。
+- `tb_green_sample.v`：用户 3 组样本 green，灰/浅绿灰/青/近黑不 green，
+  2 次滞后、丢跟踪清 green；另测 `id_chg` 清绿、采样中途换目标中止、
+  边缘网格无效清绿。PASS。
+- `tb_rtc_cdc.v`（CLK_DIV=20 缩放，异步双时钟）：58->59、59->00
+  进位、23:59:59->day+1 00:00:00、99:23:59:59 饱和保持、整组一致、
+  复位清零。PASS。
+- `tb_circle_text.v`：非绿/绿动态宽度、正负零、四角、8px 字高、
+  颜色/描边/对齐、valid=0 消失、A(GREEN)->B(非绿)->invalid 多帧；
+  运行时 01:02:03:04 的冒号/位置/字段、框覆盖运行时冲突。PASS。
+- 未跑大量长仿真；检测核心/R_MIN/EVMAX/阈值、曝光、POP/AWB/AE
+  本轮未改。
+
+### 16.6 独立构建（新目录、最终源码、EVT SDC）
+
+- 目录 `D:\FPGA\phase2_build_20261105`；`diff -rq` 确认 build 的
+  `user_source` 与两个 SDC 与工作树最终快照一致；EVT SDC；顺序
+  syn→P&R，未并行启动 TD 流程。
+- 综合：WNS **+0.212 ns**、Hold +0.114 ns；ERAM 86/108、DSP 27/40、
+  LUT6 10,512；临界路径 `u_ball_track/out_green_reg`（新逻辑，仍为正）。
+- **第一次布线出现 Hold −0.668 ns**：最差路径是
+  `u_rtc/ack_reg`(HDMI_PIXEL_CLK) → `u_rtc/sn_day_reg`(sys_clk_50m)
+  的 RTC CDC 同步器。SDC 把 `sys_clk_50m` 与 `HDMI_PIXEL_CLK` 放在
+  同一个异步组内，TD 把这条 CDC 当同步路径做 hold 检查；该位流
+  （`camera_to_dsi_display_fix.bit`）**不作为交付**。
+- 修复：RTC 是 2FF + request/ack 原子握手，快照在 ack 前保持稳定；
+  在两个 SDC 中增加**定向 CDC false path**（仅 `-through u_rtc/*`，
+  不影响其它 50MHz/HDMI 逻辑）：
+  `set_false_path -from sys_clk_50m -to HDMI_PIXEL_CLK -through u_rtc/*`
+  及反向。这是约束修正，不是功能改动。
+- 最终布线：Setup WNS **+0.110 ns**、TNS 0、0 违例；Hold WNS
+  **+0.020 ns**、0 违例；slices 18,999/21,216（**89.55%**）、
+  LUT6 18,461/21,216（87.01%）、ERAM 86/108、DSP 27/40。临界路径是
+  既有 `u_evt_circle/u_acc` RAM 读，不是新跟踪/文字。未约束项与
+  上一版一致（1 条 I2C 内部无时钟根、37/68 IO delay、4 dangling、
+  0 无效约束）。
+- **最终位流（未烧录）**：
+  `D:\FPGA\phase2_build_20261105\deliverable\camera_to_dsi_display_phase2_track.bit`
+  SHA256 `05d906fa91daa6ba03fcc1825f793848551d5562604635813e952def4f4f119a`。
+  交付目录另有 `text_render_8px.png`、`text_render_green_8px.png`、
+  `runtime_01_02_03_04.png` 及四个 TB 日志。旧位流全部保留。
+- **风险**：slices 89.55%，余量约 10%；后续再加逻辑需重新评估布局/
+  时序。本轮未改检测核心、R_MIN/EVMAX/阈值、曝光、POP/AWB/AE。

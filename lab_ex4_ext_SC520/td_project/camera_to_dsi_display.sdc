@@ -19,3 +19,11 @@ set_clock_groups -asynchronous \
     -group [get_clocks {mipi_rx_ck_pad MIPI_RX_BYTE_CLK}] \
     -group [get_clocks {sys_clk_50m pll_clk_100m pll_clk_24m HDMI_PIXEL_CLK HDMI_SERIAL_CLK ccl_clk}] \
     -group [get_clocks {u_ph1p35_324_ddr_wrapper/u_ddr2/ddr_clk u_ph1p35_324_ddr_wrapper/u_ddr2/usr_clk}]
+
+# Runtime RTC CDC: 50 MHz source <-> HDMI pixel clock destination.
+# The {day,hour,min,sec} snapshot is held stable until the destination
+# acknowledges, and both request/ack use 2FF synchronizers, so these are
+# asynchronous CDC paths, not synchronous setup/hold paths.  A targeted
+# false path keeps the synchronous timing checks on the rest of the design.
+set_false_path -from [get_clocks {sys_clk_50m}] -to [get_clocks {HDMI_PIXEL_CLK}] -through [get_pins -hier {u_rtc/*}]
+set_false_path -from [get_clocks {HDMI_PIXEL_CLK}] -to [get_clocks {sys_clk_50m}] -through [get_pins -hier {u_rtc/*}]

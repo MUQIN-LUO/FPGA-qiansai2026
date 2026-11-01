@@ -25,7 +25,12 @@ module hdmi_mixer #(
     // Circle centre from the same result snapshot as the bbox (image pixels).
     input wire[11:0]  I_det_cx,
     input wire[11:0]  I_det_cy,
+    input wire        I_det_green,   // tracked interior is green -> add GREEN
     input wire        I_det_valid,
+    input wire [7:0]  I_rt_day,      // runtime DD:HH:MM:SS (atomic CDC group)
+    input wire [7:0]  I_rt_hour,
+    input wire [7:0]  I_rt_min,
+    input wire [7:0]  I_rt_sec,
     input wire        I_det_cand,       // 颜色+面积通过但形状未过（调试用）
     input wire[9:0]   I_det_cnt,        // 命中像素数/16（调试显示）
     // 圆形诊断。EVT_CIRCLE=0: {ovf,live,chord,rows,asp,size,pass,valid};
@@ -899,6 +904,18 @@ module hdmi_mixer #(
                     3'd4: txt_font=8'h60; 3'd5: txt_font=8'h60;
                     3'd6: txt_font=8'h66; default: txt_font=8'h3C;
                 endcase
+                5'd25: case (row) // G (GREEN)
+                    3'd0: txt_font=8'h3C; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h06; 3'd3: txt_font=8'h3E;
+                    3'd4: txt_font=8'h60; 3'd5: txt_font=8'h60;
+                    3'd6: txt_font=8'h66; default: txt_font=8'h3C;
+                endcase
+                5'd26: case (row) // N (GREEN), LSB-left
+                    3'd0: txt_font=8'hC3; 3'd1: txt_font=8'hE3;
+                    3'd2: txt_font=8'hF3; 3'd3: txt_font=8'hDB;
+                    3'd4: txt_font=8'hCF; 3'd5: txt_font=8'hC7;
+                    3'd6: txt_font=8'hC3; default: txt_font=8'hC3;
+                endcase
                 default: txt_font = 8'h00;
             endcase
         end
@@ -951,11 +968,11 @@ module hdmi_mixer #(
     localparam integer TXT_SCALE = 1;                      // 8x8 glyph at 1x -> 8 px
     localparam integer TXT_CELL  = 10;                     // 8 glyph + 1 border
     localparam integer TXT_ADV   = TXT_CELL * TXT_SCALE;   // 10
-    localparam integer TXT_CHARS = 18;
-    localparam integer TXT_W     = TXT_CHARS * TXT_ADV;    // 180
+    localparam integer TXT_CHARS = 24;                     // max: CIRCLE GREEN XYZ
+    localparam integer TXT_W     = TXT_CHARS * TXT_ADV;    // 240 (max)
     localparam integer TXT_H     = TXT_CELL * TXT_SCALE;   // 10
     localparam integer TXT_GAP   = 4;
-    localparam integer TXT_XMAX  = IMG_WIDTH  - TXT_W - 4; // 1096 (3-px text pipeline + margin)
+    localparam integer TXT_XMAX  = IMG_WIDTH  - TXT_W - 4; // 1036 (3-px pipeline + margin)
     localparam integer TXT_YMAX  = IMG_HEIGHT - TXT_H;     // 710
 
     // floor(x/10) for 0 <= x < 180: five restoring-division steps, no divider.
@@ -1000,11 +1017,15 @@ module hdmi_mixer #(
     wire [3:0] S_txt_yo = S_txt_yr[3:0] -
                           (({1'b0,S_txt_yt} << 3) + ({1'b0,S_txt_yt} << 1));
 
-    // Horizontal centre over the box, clamped to the active area.
+    // Dynamic width: 18 chars normally, 24 when the optional GREEN label is
+    // shown.  The label stays centred over the box instead of leaving a gap.
+    wire [11:0] S_txt_w_act = I_det_green ? 12'd240 : 12'd180;
+    wire [11:0] S_txt_xmax  = 12'd1276 - S_txt_w_act;
     wire [12:0] S_txt_bcx = ({1'b0,I_det_minx} + {1'b0,I_det_maxx}) >> 1;
-    wire signed [13:0] S_txt_x0_raw = $signed({1'b0,S_txt_bcx}) - 14'sd90;
+    wire signed [13:0] S_txt_x0_raw = $signed({1'b0,S_txt_bcx}) -
+                                      (I_det_green ? 14'sd120 : 14'sd90);
     wire [11:0] S_txt_x0 = S_txt_x0_raw[13] ? 12'd0 :
-                           (S_txt_x0_raw > 14'sd1096) ? 12'd1096 :
+                           (S_txt_x0_raw > {2'b0,S_txt_xmax}) ? S_txt_xmax :
                            S_txt_x0_raw[11:0];
 
     // Above the box if it fits, otherwise below, otherwise clamp to bottom.
@@ -1016,6 +1037,8 @@ module hdmi_mixer #(
 
     // ---- stage 0: decoded coordinates + placement (same display frame) ----
     reg        S_txt_on_q;
+    reg        S_txt_isgreen_q;
+    reg [11:0] S_txt_w_q;
     reg        S_txt_xneg_q, S_txt_yneg_q;
     reg [3:0]  S_txt_xh_q, S_txt_xt_q, S_txt_xo_q;
     reg [3:0]  S_txt_yh_q, S_txt_yt_q, S_txt_yo_q;
@@ -1023,13 +1046,16 @@ module hdmi_mixer #(
     always @(posedge I_clk or negedge I_rst_n) begin
         if (!I_rst_n) begin
             S_txt_on_q <= 1'b0;
+            S_txt_isgreen_q <= 1'b0; S_txt_w_q <= 12'd180;
             S_txt_xneg_q <= 1'b0; S_txt_yneg_q <= 1'b0;
             S_txt_xh_q <= 4'd0; S_txt_xt_q <= 4'd0; S_txt_xo_q <= 4'd0;
             S_txt_yh_q <= 4'd0; S_txt_yt_q <= 4'd0; S_txt_yo_q <= 4'd0;
             S_txt_x0_q <= 12'd0; S_txt_y0_q <= 12'd0;
         end
         else begin
-            S_txt_on_q   <= I_det_valid;
+            S_txt_on_q    <= I_det_valid;
+            S_txt_isgreen_q <= I_det_green;
+            S_txt_w_q     <= S_txt_w_act;
             S_txt_xneg_q <= S_txt_xneg; S_txt_yneg_q <= S_txt_yneg;
             S_txt_xh_q   <= S_txt_xh;   S_txt_xt_q   <= S_txt_xt;
             S_txt_xo_q   <= S_txt_xo;
@@ -1041,7 +1067,7 @@ module hdmi_mixer #(
 
     // ---- stage A: pixel -> slot / cell -> glyph index -------------------
     wire S_txt_in_a = S_txt_on_q &&
-                      (S_x_2d >= S_txt_x0_q) && (S_x_2d < (S_txt_x0_q + TXT_W)) &&
+                      (S_x_2d >= S_txt_x0_q) && (S_x_2d < (S_txt_x0_q + S_txt_w_q)) &&
                       (S_y_2d >= S_txt_y0_q) && (S_y_2d < (S_txt_y0_q + TXT_H));
     wire [11:0] S_txt_ox = S_x_2d - S_txt_x0_q;
     wire [11:0] S_txt_oy = S_y_2d - S_txt_y0_q;
@@ -1061,17 +1087,41 @@ module hdmi_mixer #(
             5'd4:  S_txt_ch = 5'd24;                    // L
             5'd5:  S_txt_ch = 5'd19;                    // E
             5'd6:  S_txt_ch = 5'd15;                    // space
-            5'd7:  S_txt_ch = 5'd14;                    // X
-            5'd8:  S_txt_ch = S_txt_xneg_q ? 5'd31 : 5'd30;
-            5'd9:  S_txt_ch = 5'd4 + {1'b0,S_txt_xh_q};
-            5'd10: S_txt_ch = 5'd4 + {1'b0,S_txt_xt_q};
-            5'd11: S_txt_ch = 5'd4 + {1'b0,S_txt_xo_q};
+            // green: 7..11 G R E E N, 12 space, 13 X, 14 sign, 15..17 Xdig
+            // non-green: 7 X, 8 sign, 9..11 Xdig, 12 space, 13 Y, 14 sign, 15..17 Ydig
+            5'd7:  S_txt_ch = S_txt_isgreen_q ? 5'd25 : 5'd14;
+            5'd8:  S_txt_ch = S_txt_isgreen_q ? 5'd16 :
+                              (S_txt_xneg_q ? 5'd31 : 5'd30);
+            5'd9:  S_txt_ch = S_txt_isgreen_q ? 5'd19 :
+                              (5'd4 + {1'b0,S_txt_xh_q});
+            5'd10: S_txt_ch = S_txt_isgreen_q ? 5'd19 :
+                              (5'd4 + {1'b0,S_txt_xt_q});
+            5'd11: S_txt_ch = S_txt_isgreen_q ? 5'd26 :
+                              (5'd4 + {1'b0,S_txt_xo_q});
             5'd12: S_txt_ch = 5'd15;                    // space
-            5'd13: S_txt_ch = 5'd22;                    // Y
-            5'd14: S_txt_ch = S_txt_yneg_q ? 5'd31 : 5'd30;
-            5'd15: S_txt_ch = 5'd4 + {1'b0,S_txt_yh_q};
-            5'd16: S_txt_ch = 5'd4 + {1'b0,S_txt_yt_q};
-            5'd17: S_txt_ch = 5'd4 + {1'b0,S_txt_yo_q};
+            5'd13: S_txt_ch = S_txt_isgreen_q ? 5'd14 : 5'd22;
+            5'd14: S_txt_ch = S_txt_isgreen_q ?
+                              (S_txt_xneg_q ? 5'd31 : 5'd30) :
+                              (S_txt_yneg_q ? 5'd31 : 5'd30);
+            5'd15: S_txt_ch = S_txt_isgreen_q ?
+                              (5'd4 + {1'b0,S_txt_xh_q}) :
+                              (5'd4 + {1'b0,S_txt_yh_q});
+            5'd16: S_txt_ch = S_txt_isgreen_q ?
+                              (5'd4 + {1'b0,S_txt_xt_q}) :
+                              (5'd4 + {1'b0,S_txt_yt_q});
+            5'd17: S_txt_ch = S_txt_isgreen_q ?
+                              (5'd4 + {1'b0,S_txt_xo_q}) :
+                              (5'd4 + {1'b0,S_txt_yo_q});
+            5'd18: S_txt_ch = 5'd15;                    // space
+            5'd19: S_txt_ch = S_txt_isgreen_q ? 5'd22 : 5'd15;
+            5'd20: S_txt_ch = S_txt_isgreen_q ?
+                              (S_txt_yneg_q ? 5'd31 : 5'd30) : 5'd15;
+            5'd21: S_txt_ch = S_txt_isgreen_q ?
+                              (5'd4 + {1'b0,S_txt_yh_q}) : 5'd15;
+            5'd22: S_txt_ch = S_txt_isgreen_q ?
+                              (5'd4 + {1'b0,S_txt_yt_q}) : 5'd15;
+            5'd23: S_txt_ch = S_txt_isgreen_q ?
+                              (5'd4 + {1'b0,S_txt_yo_q}) : 5'd15;
             default: S_txt_ch = 5'd15;
         endcase
     end
@@ -1131,6 +1181,154 @@ module hdmi_mixer #(
         else begin
             S_txt_green_q <= S_txt_green;
             S_txt_black_q <= S_txt_black;
+        end
+    end
+
+    // ==================================================================
+    // 运行时长 DD:HH:MM:SS（右下角，左上 HUD 同字体/绿色描边）
+    //   11 个 30x30 单元，固定位置；字段来自 50 MHz 域整组原子 CDC。
+    //   ":" 用 HUD 字模 glyph 3；数字 4..13。字段在 1 Hz 更新。
+    // ==================================================================
+    localparam integer RT_SCALE = 3;
+    localparam integer RT_CELL  = 10;
+    localparam integer RT_ADV   = RT_CELL * RT_SCALE;       // 30
+    localparam integer RT_CHARS = 11;
+    localparam integer RT_W     = RT_CHARS * RT_ADV;        // 330
+    localparam integer RT_H     = RT_CELL * RT_SCALE;       // 30
+    localparam integer RT_X0    = IMG_WIDTH  - RT_W - 24;   // 926
+    localparam integer RT_Y0    = IMG_HEIGHT - RT_H - 24;   // 666
+
+    function [4:0] rt_div30;
+        input [11:0] x;
+        reg [12:0] rem;
+        integer i;
+        begin
+            rem = {1'b0, x};
+            rt_div30 = 5'd0;
+            for (i = 4; i >= 0; i = i - 1) begin
+                if (rem >= (13'd30 << i)) begin
+                    rem = rem - (13'd30 << i);
+                    rt_div30[i] = 1'b1;
+                end
+            end
+        end
+    endfunction
+
+    function [3:0] rt_div3;
+        input [11:0] x;
+        reg [12:0] rem;
+        integer i;
+        begin
+            rem = {1'b0, x};
+            rt_div3 = 4'd0;
+            for (i = 3; i >= 0; i = i - 1) begin
+                if (rem >= (13'd3 << i)) begin
+                    rem = rem - (13'd3 << i);
+                    rt_div3[i] = 1'b1;
+                end
+            end
+        end
+    endfunction
+
+    wire [3:0] S_rt_day_t = div10_99(I_rt_day[6:0]);
+    wire [6:0] S_rt_day_r = I_rt_day[6:0] -
+        (({3'd0,S_rt_day_t} << 3) + ({3'd0,S_rt_day_t} << 1));
+    wire [3:0] S_rt_day_o = S_rt_day_r[3:0];
+    wire [3:0] S_rt_hour_t = div10_99(I_rt_hour[6:0]);
+    wire [6:0] S_rt_hour_r = I_rt_hour[6:0] -
+        (({3'd0,S_rt_hour_t} << 3) + ({3'd0,S_rt_hour_t} << 1));
+    wire [3:0] S_rt_hour_o = S_rt_hour_r[3:0];
+    wire [3:0] S_rt_min_t = div10_99(I_rt_min[6:0]);
+    wire [6:0] S_rt_min_r = I_rt_min[6:0] -
+        (({3'd0,S_rt_min_t} << 3) + ({3'd0,S_rt_min_t} << 1));
+    wire [3:0] S_rt_min_o = S_rt_min_r[3:0];
+    wire [3:0] S_rt_sec_t = div10_99(I_rt_sec[6:0]);
+    wire [6:0] S_rt_sec_r = I_rt_sec[6:0] -
+        (({3'd0,S_rt_sec_t} << 3) + ({3'd0,S_rt_sec_t} << 1));
+    wire [3:0] S_rt_sec_o = S_rt_sec_r[3:0];
+
+    wire S_rt_in = (S_x_2d >= RT_X0) && (S_x_2d < (RT_X0 + RT_W)) &&
+                   (S_y_2d >= RT_Y0) && (S_y_2d < (RT_Y0 + RT_H));
+    wire [11:0] S_rt_ox = S_x_2d - RT_X0;
+    wire [11:0] S_rt_oy = S_y_2d - RT_Y0;
+    wire [4:0]  S_rt_slot = rt_div30(S_rt_ox);              // 0..10
+    wire [9:0]  S_rt_cellx = rt_div3(S_rt_ox -
+                              (({5'd0,S_rt_slot} << 5) -
+                               ({5'd0,S_rt_slot} << 1)));   // 0..9
+    wire [9:0]  S_rt_celly = rt_div3(S_rt_oy);              // 0..9
+
+    reg [4:0] S_rt_ch;
+    always @(*) begin
+        case (S_rt_slot)
+            5'd0:  S_rt_ch = 5'd4 + {1'b0,S_rt_day_t};
+            5'd1:  S_rt_ch = 5'd4 + {1'b0,S_rt_day_o};
+            5'd2:  S_rt_ch = 5'd3;                          // :
+            5'd3:  S_rt_ch = 5'd4 + {1'b0,S_rt_hour_t};
+            5'd4:  S_rt_ch = 5'd4 + {1'b0,S_rt_hour_o};
+            5'd5:  S_rt_ch = 5'd3;
+            5'd6:  S_rt_ch = 5'd4 + {1'b0,S_rt_min_t};
+            5'd7:  S_rt_ch = 5'd4 + {1'b0,S_rt_min_o};
+            5'd8:  S_rt_ch = 5'd3;
+            5'd9:  S_rt_ch = 5'd4 + {1'b0,S_rt_sec_t};
+            5'd10: S_rt_ch = 5'd4 + {1'b0,S_rt_sec_o};
+            default: S_rt_ch = 5'd15;
+        endcase
+    end
+
+    reg        S_rt_box_q;
+    reg [4:0]  S_rt_ch_q;
+    reg [3:0]  S_rt_cellx_q, S_rt_celly_q;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_rt_box_q <= 1'b0; S_rt_ch_q <= 5'd15;
+            S_rt_cellx_q <= 4'd0; S_rt_celly_q <= 4'd0;
+        end
+        else begin
+            S_rt_box_q   <= S_rt_in;
+            S_rt_ch_q    <= S_rt_ch;
+            S_rt_cellx_q <= S_rt_cellx[3:0];
+            S_rt_celly_q <= S_rt_celly[3:0];
+        end
+    end
+
+    wire [3:0] S_rt_gx  = ((S_rt_cellx_q >= 4'd1) && (S_rt_cellx_q <= 4'd8))
+                          ? (S_rt_cellx_q - 4'd1) : 4'd15;
+    wire [3:0] S_rt_gxm = ((S_rt_cellx_q >= 4'd2) && (S_rt_cellx_q <= 4'd9))
+                          ? (S_rt_cellx_q - 4'd2) : 4'd15;
+    wire [3:0] S_rt_gxp = (S_rt_cellx_q <= 4'd7) ? S_rt_cellx_q : 4'd15;
+    wire [3:0] S_rt_gy  = ((S_rt_celly_q >= 4'd1) && (S_rt_celly_q <= 4'd8))
+                          ? (S_rt_celly_q - 4'd1) : 4'd15;
+    wire [3:0] S_rt_gym = ((S_rt_celly_q >= 4'd2) && (S_rt_celly_q <= 4'd9))
+                          ? (S_rt_celly_q - 4'd2) : 4'd15;
+    wire [3:0] S_rt_gyp = (S_rt_celly_q <= 4'd7) ? S_rt_celly_q : 4'd15;
+
+    wire [15:0] S_rt_row_c = {8'b0, glyph_row(S_rt_ch_q, S_rt_gy )};
+    wire [15:0] S_rt_row_m = {8'b0, glyph_row(S_rt_ch_q, S_rt_gym)};
+    wire [15:0] S_rt_row_p = {8'b0, glyph_row(S_rt_ch_q, S_rt_gyp)};
+
+    wire S_rt_pix_c  = S_rt_row_c[S_rt_gx ];
+    wire S_rt_pix_l  = S_rt_row_c[S_rt_gxm];
+    wire S_rt_pix_r  = S_rt_row_c[S_rt_gxp];
+    wire S_rt_pix_u  = S_rt_row_m[S_rt_gx ];
+    wire S_rt_pix_d  = S_rt_row_p[S_rt_gx ];
+    wire S_rt_pix_ul = S_rt_row_m[S_rt_gxm];
+    wire S_rt_pix_ur = S_rt_row_m[S_rt_gxp];
+    wire S_rt_pix_dl = S_rt_row_p[S_rt_gxm];
+    wire S_rt_pix_dr = S_rt_row_p[S_rt_gxp];
+
+    wire S_rt_green = S_rt_box_q && S_rt_pix_c;
+    wire S_rt_black = S_rt_box_q && ~S_rt_pix_c &&
+                      (S_rt_pix_l | S_rt_pix_r | S_rt_pix_u | S_rt_pix_d |
+                       S_rt_pix_ul | S_rt_pix_ur | S_rt_pix_dl | S_rt_pix_dr);
+
+    reg S_rt_green_q, S_rt_black_q;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_rt_green_q <= 1'b0; S_rt_black_q <= 1'b0;
+        end
+        else begin
+            S_rt_green_q <= S_rt_green;
+            S_rt_black_q <= S_rt_black;
         end
     end
 
@@ -1369,6 +1567,14 @@ module hdmi_mixer #(
                         if(S_osd_green)
                             O_hdmi_data <= 24'h00ff00;
                         else if(S_osd_black)
+                            O_hdmi_data <= 24'h000000;
+                    end
+                    // 运行时长 OSD：右下角，同字体绿色+黑描边（最低优先级；
+                    // 框/文字/Logo 覆盖处让位，其余像素正常显示）
+                    else if(S_rt_box_q) begin
+                        if(S_rt_green_q)
+                            O_hdmi_data <= 24'h00ff00;
+                        else if(S_rt_black_q)
                             O_hdmi_data <= 24'h000000;
                     end
                 end

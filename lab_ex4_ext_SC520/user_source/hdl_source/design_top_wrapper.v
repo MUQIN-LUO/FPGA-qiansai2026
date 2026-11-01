@@ -153,6 +153,7 @@ module design_top_wrapper (
     // 黄色目标检测结果（CSI 域 -> 像素域）
     wire [11:0] S_det_minx, S_det_maxx, S_det_miny, S_det_maxy;
     wire [11:0] S_det_cx, S_det_cy;   // fitted/bbox centre, same result group
+    wire        S_det_green;          // optional green label, same group
     wire        S_det_valid, S_det_cand;
     wire [9:0]  S_det_cnt;
     // 圆形诊断。EVT_CIRCLE=0: {ovf,live,chord,rows,asp,size,pass,valid};
@@ -180,6 +181,7 @@ module design_top_wrapper (
     //   绝不会被改写，所以对端读到的必然是同一帧的一组值。
     reg  [11:0] S_stg_minx, S_stg_maxx, S_stg_miny, S_stg_maxy;
     reg  [11:0] S_stg_cx, S_stg_cy;
+    reg         S_stg_green;
     reg         S_stg_valid, S_stg_cand;
     reg  [ 9:0] S_stg_cnt;
     reg  [ 7:0] S_stg_flags;   // 圆形诊断位，与 bbox/valid/cand 同一快照组
@@ -194,6 +196,7 @@ module design_top_wrapper (
 
     reg  [11:0] S_sn_minx, S_sn_maxx, S_sn_miny, S_sn_maxy;
     reg  [11:0] S_sn_cx, S_sn_cy;
+    reg         S_sn_green;
     reg         S_sn_valid, S_sn_cand;
     reg  [9:0]  S_sn_cnt;
     reg  [7:0]  S_sn_flags;
@@ -204,6 +207,7 @@ module design_top_wrapper (
 
     reg  [11:0] S_rc_minx, S_rc_maxx, S_rc_miny, S_rc_maxy;
     reg  [11:0] S_rc_cx, S_rc_cy;
+    reg         S_rc_green;
     reg         S_rc_valid, S_rc_cand;
     reg  [9:0]  S_rc_cnt;
     reg  [7:0]  S_rc_flags;
@@ -214,6 +218,7 @@ module design_top_wrapper (
 
     reg  [11:0] S_det_minx_p, S_det_maxx_p, S_det_miny_p, S_det_maxy_p;
     reg  [11:0] S_det_cx_p, S_det_cy_p;
+    reg         S_det_green_p;
     reg         S_det_valid_p, S_det_cand_p;
     reg  [9:0]  S_det_cnt_p;
     reg  [7:0]  S_det_flags_p;
@@ -652,6 +657,7 @@ module design_top_wrapper (
             S_det_minx_p <= 12'd0; S_det_maxx_p <= 12'd0;
             S_det_miny_p <= 12'd0; S_det_maxy_p <= 12'd0;
             S_det_cx_p   <= 12'd0; S_det_cy_p   <= 12'd0;
+            S_det_green_p <= 1'b0;
             S_det_valid_p <= 1'b0;
             S_det_cand_p  <= 1'b0;
             S_det_cnt_p   <= 10'd0;
@@ -660,6 +666,7 @@ module design_top_wrapper (
             S_rc_minx <= 12'd0; S_rc_maxx <= 12'd0;
             S_rc_miny <= 12'd0; S_rc_maxy <= 12'd0;
             S_rc_cx   <= 12'd0; S_rc_cy   <= 12'd0;
+            S_rc_green<= 1'b0;
             S_rc_valid<= 1'b0;  S_rc_cand <= 1'b0;
             S_rc_cnt <= 10'd0;  S_rc_cal  <= 2'd0;
             S_rc_flags <= 8'd0;
@@ -694,6 +701,7 @@ module design_top_wrapper (
                 S_rc_maxy  <= S_sn_maxy;
                 S_rc_cx    <= S_sn_cx;
                 S_rc_cy    <= S_sn_cy;
+                S_rc_green <= S_sn_green;
                 S_rc_valid <= S_sn_valid;
                 S_rc_cand  <= S_sn_cand;
                 S_rc_cnt   <= S_sn_cnt;
@@ -720,6 +728,7 @@ module design_top_wrapper (
                 S_det_maxy_p  <= S_rc_maxy;
                 S_det_cx_p    <= S_rc_cx;
                 S_det_cy_p    <= S_rc_cy;
+                S_det_green_p <= S_rc_green;
                 S_det_valid_p <= S_rc_valid;
                 S_det_cand_p  <= S_rc_cand;
                 S_det_cnt_p   <= S_rc_cnt;
@@ -773,6 +782,7 @@ module design_top_wrapper (
             S_sn_minx <= 12'd0; S_sn_maxx <= 12'd0;
             S_sn_miny <= 12'd0; S_sn_maxy <= 12'd0;
             S_sn_cx   <= 12'd0; S_sn_cy   <= 12'd0;
+            S_sn_green<= 1'b0;
             S_sn_valid <= 1'b0; S_sn_cand <= 1'b0;
             S_sn_cnt <= 10'd0;  S_sn_cal <= 2'd0;  S_sn_tgl <= 1'b0;
             S_sn_flags <= 8'd0;
@@ -782,6 +792,7 @@ module design_top_wrapper (
             S_stg_minx <= 12'd0; S_stg_maxx <= 12'd0;
             S_stg_miny <= 12'd0; S_stg_maxy <= 12'd0;
             S_stg_cx   <= 12'd0; S_stg_cy   <= 12'd0;
+            S_stg_green<= 1'b0;
             S_stg_valid <= 1'b0; S_stg_cand <= 1'b0;
             S_stg_cnt <= 10'd0;  S_stg_cal <= 2'd0;
             S_stg_flags <= 8'd0;
@@ -811,6 +822,7 @@ module design_top_wrapper (
                 S_stg_maxy  <= S_det_maxy;
                 S_stg_cx    <= S_det_cx;
                 S_stg_cy    <= S_det_cy;
+                S_stg_green <= S_det_green;
                 S_stg_valid <= S_det_valid;
                 S_stg_cand  <= S_det_cand;
                 S_stg_cnt   <= S_det_cnt;
@@ -831,6 +843,7 @@ module design_top_wrapper (
                 S_sn_maxy  <= S_stg_maxy;
                 S_sn_cx    <= S_stg_cx;
                 S_sn_cy    <= S_stg_cy;
+                S_sn_green <= S_stg_green;
                 S_sn_valid <= S_stg_valid;
                 S_sn_cand  <= S_stg_cand;
                 S_sn_cnt   <= S_stg_cnt;
@@ -1467,6 +1480,7 @@ isp_top u_isp_top (
 .O_det_maxy      (S_det_maxy),
 .O_det_cx        (S_det_cx),
 .O_det_cy        (S_det_cy),
+.O_det_green     (S_det_green),
 .O_det_valid     (S_det_valid),
 .O_det_cand      (S_det_cand),
 .O_det_cnt       (S_det_cnt),
@@ -1651,6 +1665,19 @@ isp_top u_isp_top (
 
     // AE 状态在显示帧边界锁存（值来自 CSI 域中继，见 S_ae_csi）
 
+    // ---- 运行时长 DD:HH:MM:SS：50 MHz 固定分频 + 整组原子 CDC ----
+    wire [7:0] S_rt_day, S_rt_hour, S_rt_min, S_rt_sec;
+    isp_rtc_cdc #(.CLK_DIV(50_000_000)) u_rtc (
+        .src_clk   (I_sys_clk),
+        .src_rst_n (S_rst_n),
+        .dst_clk   (S_hdmi_pixel_clk),
+        .dst_rst_n (S_hdmi_rst_n),
+        .day       (S_rt_day),
+        .hour      (S_rt_hour),
+        .minute    (S_rt_min),
+        .second    (S_rt_sec)
+    );
+
     hdmi_mixer #(
         .H_OFFSET   ( 0    ),
         .V_OFFSET   ( 0    ),
@@ -1677,7 +1704,12 @@ isp_top u_isp_top (
         .I_det_maxy      ( S_det_maxy_p     ),
         .I_det_cx        ( S_det_cx_p       ),
         .I_det_cy        ( S_det_cy_p       ),
+        .I_det_green     ( S_det_green_p    ),
         .I_det_valid     ( S_det_valid_p    ),
+        .I_rt_day        ( S_rt_day         ),
+        .I_rt_hour       ( S_rt_hour        ),
+        .I_rt_min        ( S_rt_min         ),
+        .I_rt_sec        ( S_rt_sec         ),
         .I_det_cand      ( S_det_cand_p     ),
         .I_det_cnt       ( S_det_cnt_p      ),
         .I_det_flags     ( S_det_flags_p    ),
