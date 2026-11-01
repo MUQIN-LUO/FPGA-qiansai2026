@@ -61,7 +61,11 @@ module isp_circle_hough2 #(
     parameter integer EVMAX  = 1536,
     parameter integer ACC_W  = 320,
     parameter integer ACC_H  = 180,
-    parameter integer R_MIN  = 26,
+    // Event-radius window.  R_MIN=33 means rho >= 33, i.e. strictly > 32 px.
+    // Note the final 3-bin peak reports its LOWER bin (peak_bin+B0), so a
+    // true radius 33 can be reported as r=32; the acceptance window itself
+    // is still rho >= 33.  See research section 14 for the 32/33 boundary.
+    parameter integer R_MIN  = 33,
     parameter integer R_MAX  = 160,
     parameter integer TOPK   = 4,
     parameter integer ACCW   = 12,

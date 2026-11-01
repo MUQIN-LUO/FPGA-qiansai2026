@@ -22,6 +22,10 @@ def emit(path, ev, label, cap=2048):
 
 emit('ev_r25.hex', (lambda e: (m.add_circle(e,400,360,25), e)[1])([]), 'r25')
 emit('ev_r26.hex', (lambda e: (m.add_circle(e,400,360,26), e)[1])([]), 'r26')
+# rev 2j radius boundary: accept rho >= 33 (strictly > 32 px).
+emit('ev_r32.hex', (lambda e: (m.add_circle(e,640,360,32), e)[1])([]), 'r32')
+emit('ev_r33.hex', (lambda e: (m.add_circle(e,640,360,33), e)[1])([]), 'r33')
+emit('ev_r34.hex', (lambda e: (m.add_circle(e,640,360,34), e)[1])([]), 'r34')
 emit('ev_r60.hex', (lambda e: (m.add_circle(e,640,360,60), e)[1])([]), 'r60')
 emit('ev_r100.hex', (lambda e: (m.add_circle(e,640,360,100), e)[1])([]), 'r100')
 emit('ev_r160.hex', (lambda e: (m.add_circle(e,640,360,160), e)[1])([]), 'r160')

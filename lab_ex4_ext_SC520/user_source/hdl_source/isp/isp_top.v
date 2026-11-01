@@ -195,6 +195,11 @@ module isp_top #(
     output wire [11:0] O_det_maxx	,
     output wire [11:0] O_det_miny	,
     output wire [11:0] O_det_maxy	,
+    // Circle centre in image pixels, latched in the same result group as the
+    // bbox/valid/flags (EVT: fitted centre; CCL: bbox centre).  Used by the
+    // OSD to print the signed offset from the image centre (640,360).
+    output wire [11:0] O_det_cx		,
+    output wire [11:0] O_det_cy		,
     output wire        O_det_valid	,   // 尺寸+形状 全部通过（迟滞点亮的绿色状态）
     output wire        O_det_cand	,   // 本帧尺寸通过、形状未过（橙色候选）
     // EVT_CIRCLE=1: processed-frame event count, saturated to 0..999 (HUD
@@ -1661,6 +1666,12 @@ awb #(
     assign O_det_maxx  = EVT_CIRCLE ? S_ev_maxx : S_ccl_maxx;
     assign O_det_miny  = EVT_CIRCLE ? S_ev_miny : S_ccl_miny;
     assign O_det_maxy  = EVT_CIRCLE ? S_ev_maxy : S_ccl_maxy;
+    // Same result group as the bbox: EVT uses the fitted centre, CCL the
+    // centre of its bbox (the CCL path has no separate centre output).
+    assign O_det_cx    = EVT_CIRCLE ? S_ev_cx :
+                         ((S_ccl_minx + S_ccl_maxx) >> 1);
+    assign O_det_cy    = EVT_CIRCLE ? S_ev_cy :
+                         ((S_ccl_miny + S_ccl_maxy) >> 1);
     // HUD layout is unchanged: {ovf,live,chord,rows,asp,size,pass,valid}.
     // The event detector has no chord/rows/asp/size criteria; its four free
     // positions are used for independent diagnostics, and the processed-frame

@@ -22,6 +22,9 @@ module hdmi_mixer #(
     input wire[11:0]  I_det_maxx,
     input wire[11:0]  I_det_miny,
     input wire[11:0]  I_det_maxy,
+    // Circle centre from the same result snapshot as the bbox (image pixels).
+    input wire[11:0]  I_det_cx,
+    input wire[11:0]  I_det_cy,
     input wire        I_det_valid,
     input wire        I_det_cand,       // 颜色+面积通过但形状未过（调试用）
     input wire[9:0]   I_det_cnt,        // 命中像素数/16（调试显示）
@@ -735,6 +738,30 @@ module hdmi_mixer #(
                     3'd4: osd_font = 8'h63; 3'd5: osd_font = 8'h63;
                     3'd6: osd_font = 8'h1F; default: osd_font = 8'h00;
                 endcase
+                5'd14: case (row)  // X (signed-coordinate axis label)
+                    3'd0: osd_font = 8'h63; 3'd1: osd_font = 8'h63;
+                    3'd2: osd_font = 8'h36; 3'd3: osd_font = 8'h1C;
+                    3'd4: osd_font = 8'h36; 3'd5: osd_font = 8'h63;
+                    3'd6: osd_font = 8'h63; default: osd_font = 8'h00;
+                endcase
+                5'd29: case (row)  // I
+                    3'd0: osd_font = 8'h7F; 3'd1: osd_font = 8'h18;
+                    3'd2: osd_font = 8'h18; 3'd3: osd_font = 8'h18;
+                    3'd4: osd_font = 8'h18; 3'd5: osd_font = 8'h18;
+                    3'd6: osd_font = 8'h7F; default: osd_font = 8'h00;
+                endcase
+                5'd30: case (row)  // +
+                    3'd0: osd_font = 8'h00; 3'd1: osd_font = 8'h18;
+                    3'd2: osd_font = 8'h18; 3'd3: osd_font = 8'h7E;
+                    3'd4: osd_font = 8'h18; 3'd5: osd_font = 8'h18;
+                    3'd6: osd_font = 8'h00; default: osd_font = 8'h00;
+                endcase
+                5'd31: case (row)  // -
+                    3'd0: osd_font = 8'h00; 3'd1: osd_font = 8'h00;
+                    3'd2: osd_font = 8'h00; 3'd3: osd_font = 8'h7E;
+                    3'd4: osd_font = 8'h00; 3'd5: osd_font = 8'h00;
+                    3'd6: osd_font = 8'h00; default: osd_font = 8'h00;
+                endcase
                 default: osd_font = 8'h00;
             endcase
         end
@@ -747,6 +774,142 @@ module hdmi_mixer #(
         begin
             if (y > 4'd7) glyph_row = 8'h00;
             else          glyph_row = osd_font(ch, y[2:0]);
+        end
+    endfunction
+
+    // ---- 8x8 字模（8 行全用，专供识别框旁 32px 文字）----------------
+    // 与 7 行的 HUD 字模分开，保证字形高度正好 8*4 = 32 显示像素。
+    function [7:0] txt_font;
+        input [4:0] ch;
+        input [2:0] row;
+        begin
+            txt_font = 8'h00;
+            case (ch)
+                5'd28: case (row)  // C
+                    3'd0: txt_font=8'h3C; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h60; 3'd3: txt_font=8'h60;
+                    3'd4: txt_font=8'h60; 3'd5: txt_font=8'h60;
+                    3'd6: txt_font=8'h66; default: txt_font=8'h3C;
+                endcase
+                5'd29: case (row)  // I
+                    3'd0: txt_font=8'h7E; 3'd1: txt_font=8'h18;
+                    3'd2: txt_font=8'h18; 3'd3: txt_font=8'h18;
+                    3'd4: txt_font=8'h18; 3'd5: txt_font=8'h18;
+                    3'd6: txt_font=8'h18; default: txt_font=8'h7E;
+                endcase
+                5'd16: case (row)  // R
+                    3'd0: txt_font=8'h7C; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h66; 3'd3: txt_font=8'h7C;
+                    3'd4: txt_font=8'h6C; 3'd5: txt_font=8'h66;
+                    3'd6: txt_font=8'h66; default: txt_font=8'h66;
+                endcase
+                5'd24: case (row)  // L
+                    3'd0: txt_font=8'h60; 3'd1: txt_font=8'h60;
+                    3'd2: txt_font=8'h60; 3'd3: txt_font=8'h60;
+                    3'd4: txt_font=8'h60; 3'd5: txt_font=8'h60;
+                    3'd6: txt_font=8'h60; default: txt_font=8'h7E;
+                endcase
+                5'd19: case (row)  // E
+                    3'd0: txt_font=8'h7E; 3'd1: txt_font=8'h06;
+                    3'd2: txt_font=8'h06; 3'd3: txt_font=8'h3E;
+                    3'd4: txt_font=8'h06; 3'd5: txt_font=8'h06;
+                    3'd6: txt_font=8'h06; default: txt_font=8'h7E;
+                endcase
+                5'd14: case (row)  // X
+                    3'd0: txt_font=8'h66; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h3C; 3'd3: txt_font=8'h18;
+                    3'd4: txt_font=8'h3C; 3'd5: txt_font=8'h66;
+                    3'd6: txt_font=8'h66; default: txt_font=8'h66;
+                endcase
+                5'd22: case (row)  // Y
+                    3'd0: txt_font=8'h66; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h66; 3'd3: txt_font=8'h3C;
+                    3'd4: txt_font=8'h18; 3'd5: txt_font=8'h18;
+                    3'd6: txt_font=8'h18; default: txt_font=8'h18;
+                endcase
+                5'd30: case (row)  // +
+                    3'd0: txt_font=8'h00; 3'd1: txt_font=8'h18;
+                    3'd2: txt_font=8'h18; 3'd3: txt_font=8'h7E;
+                    3'd4: txt_font=8'h18; 3'd5: txt_font=8'h18;
+                    3'd6: txt_font=8'h00; default: txt_font=8'h00;
+                endcase
+                5'd31: case (row)  // -
+                    3'd0: txt_font=8'h00; 3'd1: txt_font=8'h00;
+                    3'd2: txt_font=8'h00; 3'd3: txt_font=8'h7E;
+                    3'd4: txt_font=8'h00; 3'd5: txt_font=8'h00;
+                    3'd6: txt_font=8'h00; default: txt_font=8'h00;
+                endcase
+                5'd4: case (row)  // 0
+                    3'd0: txt_font=8'h3C; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h66; 3'd3: txt_font=8'h66;
+                    3'd4: txt_font=8'h66; 3'd5: txt_font=8'h66;
+                    3'd6: txt_font=8'h66; default: txt_font=8'h3C;
+                endcase
+                5'd5: case (row)  // 1
+                    3'd0: txt_font=8'h18; 3'd1: txt_font=8'h1C;
+                    3'd2: txt_font=8'h18; 3'd3: txt_font=8'h18;
+                    3'd4: txt_font=8'h18; 3'd5: txt_font=8'h18;
+                    3'd6: txt_font=8'h18; default: txt_font=8'h7E;
+                endcase
+                5'd6: case (row)  // 2
+                    3'd0: txt_font=8'h3C; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h60; 3'd3: txt_font=8'h30;
+                    3'd4: txt_font=8'h18; 3'd5: txt_font=8'h0C;
+                    3'd6: txt_font=8'h06; default: txt_font=8'h7E;
+                endcase
+                5'd7: case (row)  // 3
+                    3'd0: txt_font=8'h3C; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h60; 3'd3: txt_font=8'h38;
+                    3'd4: txt_font=8'h60; 3'd5: txt_font=8'h60;
+                    3'd6: txt_font=8'h66; default: txt_font=8'h3C;
+                endcase
+                5'd8: case (row)  // 4
+                    3'd0: txt_font=8'h18; 3'd1: txt_font=8'h38;
+                    3'd2: txt_font=8'h6C; 3'd3: txt_font=8'h66;
+                    3'd4: txt_font=8'h7E; 3'd5: txt_font=8'h60;
+                    3'd6: txt_font=8'h60; default: txt_font=8'h60;
+                endcase
+                5'd9: case (row)  // 5
+                    3'd0: txt_font=8'h7E; 3'd1: txt_font=8'h06;
+                    3'd2: txt_font=8'h06; 3'd3: txt_font=8'h3E;
+                    3'd4: txt_font=8'h60; 3'd5: txt_font=8'h60;
+                    3'd6: txt_font=8'h66; default: txt_font=8'h3C;
+                endcase
+                5'd10: case (row) // 6
+                    3'd0: txt_font=8'h3C; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h06; 3'd3: txt_font=8'h3E;
+                    3'd4: txt_font=8'h66; 3'd5: txt_font=8'h66;
+                    3'd6: txt_font=8'h66; default: txt_font=8'h3C;
+                endcase
+                5'd11: case (row) // 7
+                    3'd0: txt_font=8'h7E; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h60; 3'd3: txt_font=8'h30;
+                    3'd4: txt_font=8'h18; 3'd5: txt_font=8'h18;
+                    3'd6: txt_font=8'h18; default: txt_font=8'h18;
+                endcase
+                5'd12: case (row) // 8
+                    3'd0: txt_font=8'h3C; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h66; 3'd3: txt_font=8'h3C;
+                    3'd4: txt_font=8'h66; 3'd5: txt_font=8'h66;
+                    3'd6: txt_font=8'h66; default: txt_font=8'h3C;
+                endcase
+                5'd13: case (row) // 9
+                    3'd0: txt_font=8'h3C; 3'd1: txt_font=8'h66;
+                    3'd2: txt_font=8'h66; 3'd3: txt_font=8'h3E;
+                    3'd4: txt_font=8'h60; 3'd5: txt_font=8'h60;
+                    3'd6: txt_font=8'h66; default: txt_font=8'h3C;
+                endcase
+                default: txt_font = 8'h00;
+            endcase
+        end
+    endfunction
+
+    function [7:0] txt_glyph_row;
+        input [4:0] ch;
+        input [3:0] y;
+        begin
+            if (y > 4'd7) txt_glyph_row = 8'h00;
+            else          txt_glyph_row = txt_font(ch, y[2:0]);
         end
     endfunction
 
@@ -768,6 +931,204 @@ module hdmi_mixer #(
     wire S_osd_black = ~S_pix_c &&                    // 描边：8 邻域有字形则涂黑
                        (S_pix_l | S_pix_r | S_pix_u | S_pix_d |
                         S_pix_ul | S_pix_ur | S_pix_dl | S_pix_dr);
+
+    // ==================================================================
+    // 识别框旁的文字：CIRCLE X<sign><ddd> Y<sign><ddd>
+    //   - 18 个字符槽，10x10 字体单元（8x8 字形 + 1 像素描边边），
+    //     放大 4 倍：字形高 32 显示像素，字距/行高 40
+    //   - 绿色字形 + 黑色 8 邻域描边；背景透明
+    //   - 坐标 = 圆心相对画面中心 (IMG_WIDTH/2, IMG_HEIGHT/2)：
+    //       向右 X 正、向下 Y 正；始终显示符号，三位补零
+    //   - 位置在框上方（不够则下方），水平居中并夹在有效区内，防裁切
+    //   - 只在 I_det_valid=1 时显示；框失效文字消失
+    //   - 全部取自 I_det_* 同一显示帧快照（wrapper 在 S_hdmi_user 整组锁存）
+    //   - 坐标/位置/字形查表分级寄存，避免长组合路径（与既有 OSD 同理）
+    // ==================================================================
+    localparam integer TXT_SCALE = 4;
+    localparam integer TXT_CELL  = 10;                     // 8 glyph + 1 border
+    localparam integer TXT_ADV   = TXT_CELL * TXT_SCALE;   // 40
+    localparam integer TXT_CHARS = 18;
+    localparam integer TXT_W     = TXT_CHARS * TXT_ADV;    // 720
+    localparam integer TXT_H     = TXT_CELL * TXT_SCALE;   // 40
+    localparam integer TXT_GAP   = 4;
+    localparam integer TXT_XMAX  = IMG_WIDTH  - TXT_W - 4; // 556 (3-px text pipeline + margin)
+    localparam integer TXT_YMAX  = IMG_HEIGHT - TXT_H;     // 680
+
+    // floor(x/40) for 0 <= x < 720: five restoring-division steps, no divider.
+    function [4:0] txt_div40;
+        input [11:0] x;
+        reg [12:0] rem;
+        integer i;
+        begin
+            rem = {1'b0, x};
+            txt_div40 = 5'd0;
+            for (i = 4; i >= 0; i = i - 1) begin
+                if (rem >= (13'd40 << i)) begin
+                    rem = rem - (13'd40 << i);
+                    txt_div40[i] = 1'b1;
+                end
+            end
+        end
+    endfunction
+
+    wire signed [12:0] S_txt_dx = $signed({1'b0, I_det_cx}) - 13'sd640;
+    wire signed [12:0] S_txt_dy = $signed({1'b0, I_det_cy}) - 13'sd360;
+    wire S_txt_xneg = S_txt_dx[12];
+    wire S_txt_yneg = S_txt_dy[12];
+    wire [12:0] S_txt_xabs = S_txt_xneg ? (~S_txt_dx + 13'd1) : S_txt_dx;
+    wire [12:0] S_txt_yabs = S_txt_yneg ? (~S_txt_dy + 13'd1) : S_txt_dy;
+    wire [9:0]  S_txt_xv = (S_txt_xabs > 13'd999) ? 10'd999 : S_txt_xabs[9:0];
+    wire [9:0]  S_txt_yv = (S_txt_yabs > 13'd999) ? 10'd999 : S_txt_yabs[9:0];
+
+    wire [3:0] S_txt_xh = div100_999(S_txt_xv);
+    wire [9:0] S_txt_xr = S_txt_xv -
+                          (({6'd0,S_txt_xh} << 6) + ({6'd0,S_txt_xh} << 5) +
+                           ({6'd0,S_txt_xh} << 2));
+    wire [3:0] S_txt_xt = div10_99(S_txt_xr[6:0]);
+    wire [3:0] S_txt_xo = S_txt_xr[3:0] -
+                          (({1'b0,S_txt_xt} << 3) + ({1'b0,S_txt_xt} << 1));
+
+    wire [3:0] S_txt_yh = div100_999(S_txt_yv);
+    wire [9:0] S_txt_yr = S_txt_yv -
+                          (({6'd0,S_txt_yh} << 6) + ({6'd0,S_txt_yh} << 5) +
+                           ({6'd0,S_txt_yh} << 2));
+    wire [3:0] S_txt_yt = div10_99(S_txt_yr[6:0]);
+    wire [3:0] S_txt_yo = S_txt_yr[3:0] -
+                          (({1'b0,S_txt_yt} << 3) + ({1'b0,S_txt_yt} << 1));
+
+    // Horizontal centre over the box, clamped to the active area.
+    wire [12:0] S_txt_bcx = ({1'b0,I_det_minx} + {1'b0,I_det_maxx}) >> 1;
+    wire signed [13:0] S_txt_x0_raw = $signed({1'b0,S_txt_bcx}) - 14'sd360;
+    wire [11:0] S_txt_x0 = S_txt_x0_raw[13] ? 12'd0 :
+                           (S_txt_x0_raw > 14'sd556) ? 12'd556 :
+                           S_txt_x0_raw[11:0];
+
+    // Above the box if it fits, otherwise below, otherwise clamp to bottom.
+    wire S_txt_above_ok = (I_det_miny >= (TXT_H + TXT_GAP));
+    wire [12:0] S_txt_below = {1'b0,I_det_maxy} + TXT_GAP;
+    wire S_txt_below_ok = (S_txt_below <= TXT_YMAX);
+    wire [11:0] S_txt_y0 = S_txt_above_ok ? (I_det_miny - (TXT_H + TXT_GAP)) :
+                           S_txt_below_ok ? S_txt_below[11:0] : TXT_YMAX;
+
+    // ---- stage 0: decoded coordinates + placement (same display frame) ----
+    reg        S_txt_on_q;
+    reg        S_txt_xneg_q, S_txt_yneg_q;
+    reg [3:0]  S_txt_xh_q, S_txt_xt_q, S_txt_xo_q;
+    reg [3:0]  S_txt_yh_q, S_txt_yt_q, S_txt_yo_q;
+    reg [11:0] S_txt_x0_q, S_txt_y0_q;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_txt_on_q <= 1'b0;
+            S_txt_xneg_q <= 1'b0; S_txt_yneg_q <= 1'b0;
+            S_txt_xh_q <= 4'd0; S_txt_xt_q <= 4'd0; S_txt_xo_q <= 4'd0;
+            S_txt_yh_q <= 4'd0; S_txt_yt_q <= 4'd0; S_txt_yo_q <= 4'd0;
+            S_txt_x0_q <= 12'd0; S_txt_y0_q <= 12'd0;
+        end
+        else begin
+            S_txt_on_q   <= I_det_valid;
+            S_txt_xneg_q <= S_txt_xneg; S_txt_yneg_q <= S_txt_yneg;
+            S_txt_xh_q   <= S_txt_xh;   S_txt_xt_q   <= S_txt_xt;
+            S_txt_xo_q   <= S_txt_xo;
+            S_txt_yh_q   <= S_txt_yh;   S_txt_yt_q   <= S_txt_yt;
+            S_txt_yo_q   <= S_txt_yo;
+            S_txt_x0_q   <= S_txt_x0;   S_txt_y0_q   <= S_txt_y0;
+        end
+    end
+
+    // ---- stage A: pixel -> slot / cell -> glyph index -------------------
+    wire S_txt_in_a = S_txt_on_q &&
+                      (S_x_2d >= S_txt_x0_q) && (S_x_2d < (S_txt_x0_q + TXT_W)) &&
+                      (S_y_2d >= S_txt_y0_q) && (S_y_2d < (S_txt_y0_q + TXT_H));
+    wire [11:0] S_txt_ox = S_x_2d - S_txt_x0_q;
+    wire [11:0] S_txt_oy = S_y_2d - S_txt_y0_q;
+    wire [4:0]  S_txt_slot = txt_div40(S_txt_ox);          // 0..17
+    wire [9:0]  S_txt_cellx = (S_txt_ox -
+                               (({5'd0,S_txt_slot} << 5) +
+                                ({5'd0,S_txt_slot} << 3))) >> 2;   // 0..9
+    wire [9:0]  S_txt_celly = S_txt_oy[5:2];               // 0..9
+
+    reg [4:0] S_txt_ch;
+    always @(*) begin
+        case (S_txt_slot)
+            5'd0:  S_txt_ch = 5'd28;                    // C
+            5'd1:  S_txt_ch = 5'd29;                    // I
+            5'd2:  S_txt_ch = 5'd16;                    // R
+            5'd3:  S_txt_ch = 5'd28;                    // C
+            5'd4:  S_txt_ch = 5'd24;                    // L
+            5'd5:  S_txt_ch = 5'd19;                    // E
+            5'd6:  S_txt_ch = 5'd15;                    // space
+            5'd7:  S_txt_ch = 5'd14;                    // X
+            5'd8:  S_txt_ch = S_txt_xneg_q ? 5'd31 : 5'd30;
+            5'd9:  S_txt_ch = 5'd4 + {1'b0,S_txt_xh_q};
+            5'd10: S_txt_ch = 5'd4 + {1'b0,S_txt_xt_q};
+            5'd11: S_txt_ch = 5'd4 + {1'b0,S_txt_xo_q};
+            5'd12: S_txt_ch = 5'd15;                    // space
+            5'd13: S_txt_ch = 5'd22;                    // Y
+            5'd14: S_txt_ch = S_txt_yneg_q ? 5'd31 : 5'd30;
+            5'd15: S_txt_ch = 5'd4 + {1'b0,S_txt_yh_q};
+            5'd16: S_txt_ch = 5'd4 + {1'b0,S_txt_yt_q};
+            5'd17: S_txt_ch = 5'd4 + {1'b0,S_txt_yo_q};
+            default: S_txt_ch = 5'd15;
+        endcase
+    end
+
+    reg        S_txt_box_q;
+    reg [4:0]  S_txt_ch_q;
+    reg [3:0]  S_txt_cellx_q, S_txt_celly_q;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_txt_box_q <= 1'b0; S_txt_ch_q <= 5'd15;
+            S_txt_cellx_q <= 4'd0; S_txt_celly_q <= 4'd0;
+        end
+        else begin
+            S_txt_box_q   <= S_txt_in_a;
+            S_txt_ch_q    <= S_txt_ch;
+            S_txt_cellx_q <= S_txt_cellx[3:0];
+            S_txt_celly_q <= S_txt_celly[3:0];
+        end
+    end
+
+    // ---- stage B: registered cell -> glyph pixels + 8-neighbour outline --
+    wire [3:0] S_txt_gx  = ((S_txt_cellx_q >= 4'd1) && (S_txt_cellx_q <= 4'd8))
+                           ? (S_txt_cellx_q - 4'd1) : 4'd15;
+    wire [3:0] S_txt_gxm = ((S_txt_cellx_q >= 4'd2) && (S_txt_cellx_q <= 4'd9))
+                           ? (S_txt_cellx_q - 4'd2) : 4'd15;
+    wire [3:0] S_txt_gxp = (S_txt_cellx_q <= 4'd7) ? S_txt_cellx_q : 4'd15;
+    wire [3:0] S_txt_gy  = ((S_txt_celly_q >= 4'd1) && (S_txt_celly_q <= 4'd8))
+                           ? (S_txt_celly_q - 4'd1) : 4'd15;
+    wire [3:0] S_txt_gym = ((S_txt_celly_q >= 4'd2) && (S_txt_celly_q <= 4'd9))
+                           ? (S_txt_celly_q - 4'd2) : 4'd15;
+    wire [3:0] S_txt_gyp = (S_txt_celly_q <= 4'd7) ? S_txt_celly_q : 4'd15;
+
+    wire [15:0] S_txt_row_c = {8'b0, txt_glyph_row(S_txt_ch_q, S_txt_gy )};
+    wire [15:0] S_txt_row_m = {8'b0, txt_glyph_row(S_txt_ch_q, S_txt_gym)};
+    wire [15:0] S_txt_row_p = {8'b0, txt_glyph_row(S_txt_ch_q, S_txt_gyp)};
+
+    wire S_txt_pix_c  = S_txt_row_c[S_txt_gx ];
+    wire S_txt_pix_l  = S_txt_row_c[S_txt_gxm];
+    wire S_txt_pix_r  = S_txt_row_c[S_txt_gxp];
+    wire S_txt_pix_u  = S_txt_row_m[S_txt_gx ];
+    wire S_txt_pix_d  = S_txt_row_p[S_txt_gx ];
+    wire S_txt_pix_ul = S_txt_row_m[S_txt_gxm];
+    wire S_txt_pix_ur = S_txt_row_m[S_txt_gxp];
+    wire S_txt_pix_dl = S_txt_row_p[S_txt_gxm];
+    wire S_txt_pix_dr = S_txt_row_p[S_txt_gxp];
+
+    wire S_txt_green = S_txt_box_q && S_txt_pix_c;
+    wire S_txt_black = S_txt_box_q && ~S_txt_pix_c &&
+                       (S_txt_pix_l | S_txt_pix_r | S_txt_pix_u | S_txt_pix_d |
+                        S_txt_pix_ul | S_txt_pix_ur | S_txt_pix_dl | S_txt_pix_dr);
+
+    reg S_txt_green_q, S_txt_black_q;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_txt_green_q <= 1'b0; S_txt_black_q <= 1'b0;
+        end
+        else begin
+            S_txt_green_q <= S_txt_green;
+            S_txt_black_q <= S_txt_black;
+        end
+    end
 
     // ==================================================================
     // 安路 Logo（基础要求 2.3(4)）：右上角 160x160 位图
@@ -982,8 +1343,14 @@ module hdmi_mixer #(
             else begin
                 if(S_video_de_2d) begin
                     O_hdmi_data <= S_window_active_2d ? S_video_data_2d : 24'd0;
+                    // 识别框旁文字：绿色字形 + 黑色描边（最高优先级，防被
+                    // 其它叠加层截断；背景透明，非字形像素继续走下面的链）
+                    if(S_txt_green_q)
+                        O_hdmi_data <= 24'h00ff00;
+                    else if(S_txt_black_q)
+                        O_hdmi_data <= 24'h000000;
                     // 黄色目标外接框：绿=完全通过，橙=形状未通过
-                    if(S_box_edge)
+                    else if(S_box_edge)
                         O_hdmi_data <= I_det_valid ? 24'h00ff00 : 24'hff8000;
                     else if(S_red_edge_q)
                         O_hdmi_data <= 24'h00ffff;
