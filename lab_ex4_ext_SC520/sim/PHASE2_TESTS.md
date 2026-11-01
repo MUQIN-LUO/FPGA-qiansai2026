@@ -560,3 +560,35 @@ Fresh tree `D:\FPGA\phase2_build_20261105`, final RTL/SDC snapshot
   `05d906fa91daa6ba03fcc1825f793848551d5562604635813e952def4f4f119a`
   (not flashed; older bits preserved).  Resource headroom ~10%;
   future logic additions need a new timing/resource check.
+
+## rev 2m — HUD GREEN G glyph fix + buzzer preview
+
+- `txt_font` 5'd25 G changed to the HUD-style open-mouth pattern
+  `3C,66,03,73,63,63,66,3C`; the old full middle bar made it read as S
+  at 8 px.  Actual `hdmi_mixer` pixel render (`logs/text_render_green.png`,
+  `logs/green_word_zoom.png`) confirms G R E E N and the full
+  `CIRCLE GREEN X+123 Y-045`; `tb_circle_text` GREEN case PASS.  No other
+  RTL changed; no long unrelated simulations.
+- Buzzer preview: `audio_preview/one_more_time_approx_buzzer.wav`
+  (mono 16-bit 22050 Hz square, 123 BPM, 17 beats, ~8.29 s) plus its
+  generator and README.  It is explicitly an **approximate/inspired**
+  excerpt (no reliable score/MIDI verified), not a faithful transcription;
+  the passive buzzer is not wired and its type is unverified.
+
+### Build (rev 2m)
+
+Fresh tree `D:\FPGA\phase2_build_20261106`, final G-fixed RTL/SDC snapshot
+(diff-verified), EVT SDC, sequential syn then P&R:
+- Syn: WNS +0.128 ns, hold +0.114 ns, ERAM 86/108, DSP 27/40,
+  LUT6 10,655; critical path `u_ball_track/out_green_reg`.
+- P&R: setup WNS +0.135 ns, TNS 0; hold WNS +0.020 ns, 0 violations;
+  slices 19,138/21,216 (90.21%), LUT6 18,550/21,216 (87.43%),
+  ERAM 86/108, DSP 27/40.  Critical path is the existing
+  `u_evt_circle/ls_bx`; no negative hold paths.
+- Unconstrained profile unchanged (1 I2C no-clock root, 37/68 IO delays,
+  4 dangling, 0 invalid).
+- New bit `camera_to_dsi_display_phase2_track_g.bit`, SHA256
+  `8d2603606ed666454fbca0962f77b99be04580e34b6955a462eb344a0b00bca3`
+  (not flashed; all older bits preserved).
+- Resource headroom is now ~9.8%; further logic needs a new build and
+  timing/resource check.

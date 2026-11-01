@@ -1256,3 +1256,54 @@ L:  ##......    E:  .######.    X:  .##..##.    Y:  .##..##.
   `runtime_01_02_03_04.png` 及四个 TB 日志。旧位流全部保留。
 - **风险**：slices 89.55%，余量约 10%；后续再加逻辑需重新评估布局/
   时序。本轮未改检测核心、R_MIN/EVMAX/阈值、曝光、POP/AWB/AE。
+
+## 17. HUD GREEN 字首 G 修复 + 蜂鸣器试听（2026-11-01 夜，rev 2m）
+
+### 17.1 G 字形修复（按实际像素核对）
+
+上板/渲染图中 GREEN 的首字母 G 看起来像 S。核对 `txt_font` 的
+`5'd25`：原图案 `3C,66,06,3E,60,60,66,3C` 的中横（0x3E）与左竖相连，
+在 8px 下与 S 的轮廓过于接近。改为 HUD 风格的 G：
+
+```
+3C, 66, 03, 73, 63, 63, 66, 3C   // 中横只连右侧，左侧留缺口
+```
+
+用真实 `hdmi_mixer` 输出像素重新渲染（`tb_circle_text` 的 GREEN 用例），
+生成 `logs/text_render_green.png` 和 16x 放大的
+`logs/green_word_zoom.png`；逐字确认 **G R E E N**，全串
+`CIRCLE GREEN X+123 Y-045`。`tb_circle_text` GREEN 用例 PASS。
+本轮只改文字字模，未改检测/跟踪/曝光/POP/AWB/AE。
+
+### 17.2 无源蜂鸣器试听 WAV（近似/灵感示例）
+
+- 路径：`lab_ex4_ext_SC520/audio_preview/one_more_time_approx_buzzer.wav`
+- 生成脚本：`.../gen_one_more_time_preview.py`（仅 Python 标准库）
+- 说明：`.../README_one_more_time_preview.md`（旋律依据、音符频率/时值、
+  免责声明）
+- 格式：单声道 16-bit PCM 22050Hz，单音方波；123 BPM；17 拍，
+  约 8.29 s；F#5/A5/B5/C#6/D6，740–1175Hz；5ms attack/release、
+  25ms 音间间隙。
+- **重要**：未在本会话从可靠谱例/MIDI 核实原曲音符，因此这是
+  **近似/灵感示例，不是忠实还原**；蜂鸣器尚未接线、有源/无源未核实，
+  不构成硬件验证结论。
+
+### 17.3 独立构建（新目录、最终源码、EVT SDC）
+
+- 目录 `D:\FPGA\phase2_build_20261106`；`diff -rq` 确认 build 的
+  `user_source` 与 EVT SDC 与工作树最终快照一致；顺序 syn→P&R，
+  未并行 TD。
+- 综合：WNS **+0.128 ns**、Hold +0.114 ns；ERAM 86/108、DSP 27/40、
+  LUT6 10,655；临界路径 `u_ball_track/out_green_reg`。
+- 布线：Setup WNS **+0.135 ns**、TNS 0、0 违例；Hold WNS
+  **+0.020 ns**、0 违例；slices **19,138/21,216（90.21%）**、
+  LUT6 18,550/21,216（87.43%）、ERAM 86/108、DSP 27/40。临界路径是
+  既有 `u_evt_circle/ls_bx`；无负 hold 路径。未约束项与上一版一致
+  （1 条 I2C 内部无时钟根、37/68 IO delay、4 dangling、0 无效约束）。
+- **新位流（未烧录）**：
+  `D:\FPGA\phase2_build_20261106\deliverable\camera_to_dsi_display_phase2_track_g.bit`
+  SHA256 `8d2603606ed666454fbca0962f77b99be04580e34b6955a462eb344a0b00bca3`。
+  交付目录含 G 渲染图（`text_render_green_8px.png`、
+  `green_word_zoom_16x.png`）和 `audio_preview/`。旧位流全部保留。
+- **风险**：slices 90.21%，余量约 9.8%；后续再加逻辑必须重新综合/
+  布线并复核时序。

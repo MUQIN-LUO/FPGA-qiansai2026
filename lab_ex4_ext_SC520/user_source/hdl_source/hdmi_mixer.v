@@ -904,10 +904,10 @@ module hdmi_mixer #(
                     3'd4: txt_font=8'h60; 3'd5: txt_font=8'h60;
                     3'd6: txt_font=8'h66; default: txt_font=8'h3C;
                 endcase
-                5'd25: case (row) // G (GREEN)
+                5'd25: case (row) // G (GREEN), HUD-style open mouth
                     3'd0: txt_font=8'h3C; 3'd1: txt_font=8'h66;
-                    3'd2: txt_font=8'h06; 3'd3: txt_font=8'h3E;
-                    3'd4: txt_font=8'h60; 3'd5: txt_font=8'h60;
+                    3'd2: txt_font=8'h03; 3'd3: txt_font=8'h73;
+                    3'd4: txt_font=8'h63; 3'd5: txt_font=8'h63;
                     3'd6: txt_font=8'h66; default: txt_font=8'h3C;
                 endcase
                 5'd26: case (row) // N (GREEN), LSB-left
