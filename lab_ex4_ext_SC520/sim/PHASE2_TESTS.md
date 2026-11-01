@@ -335,12 +335,23 @@ output frame per case.  All checks PASS:
 
 | Case | Result |
 |---|---|
-| `X+123 Y-045` (centre box) | glyph sequence exact; green 6,096 px (green bbox 32 px tall, y0+4..y0+35), black 10,224 px; black bbox starts at `(x0+6, y0)`; 74% of green pixels have a black neighbour within ±2 px |
+| `X+123 Y-045` (centre box) | glyph sequence exact; green 381 px (green bbox 8 px tall, y0+1..y0+8), black 639 px; black bbox starts at `(x0+3, y0)`; 100% of green pixels have a black neighbour within ±2 px |
 | `X+000 Y+000` | zero shows `+000`; rendered |
 | `X-045 Y+123` | negative sign/digits rendered |
-| four screen corners | x clamps to 0 / 556, y places below/above; text bbox stays inside 0..1279 x 0..719 |
+| four screen corners | x clamps to 0 / 1096, y places below/above; text bbox stays inside 0..1279 x 0..719 |
 | `I_det_valid=0` | text enable cleared; zero green/black text pixels |
 | multi-frame A→B→invalid | B's glyphs replace A's; A's old region is empty; invalid frame removes B |
+
+**Bit-order root cause and visual evidence.** The display selects
+`glyph_row[gx]` with `gx` increasing right, so the font must be LSB-left
+(bit0 = leftmost).  The first 32-px version used MSB-left C/R/L patterns
+while E/digits were already LSB-left, so the board showed `CIЯↃ⅃E`.
+Only C/R/L were changed to LSB-left; E/digits were left alone.  The test
+now writes the actual captured pixels at 1 char/display-pixel to
+`logs/text_render.txt` and `logs/text_render.ppm` (converted to
+`logs/text_render.png`); per-character inspection confirms
+`C I R C L E` and every digit/sign orientation, with the 1-px outline
+surrounding (not overwriting) the glyph pixels.
 
 Run:
 ```bat
@@ -405,3 +416,51 @@ EVT SDC, sequential synthesis then P&R:
 - New bit `camera_to_dsi_display_phase2_text.bit`, SHA256
   `b8e9145f4d052b3de6a534f980f592afdb2fd4cbc9c55c0a9bcf0e0c93128607`
   (not flashed; older bits untouched).
+
+## rev 2k — CIRCLE glyph bit-order fix + 8px
+
+### Root cause (pixel-level, not character numbering)
+
+The display selects `glyph_row[gx]` with `gx` increasing to the right, so
+the font must be LSB-left (bit0 = leftmost).  The first text font mixed
+conventions: C/R/L were MSB-left while E/digits were already LSB-left.
+The board showed exactly `CIЯↃ⅃E` (only C/R/L mirrored).  A blanket
+bit reversal was tested and rejected: it corrected C/R/L but mirrored the
+already-correct E/digits.  Final fix: rewrite only C/R/L to LSB-left;
+E/digits keep their proven patterns.
+
+### Size
+
+- `TXT_SCALE 4 -> 1`: 8x8 glyph at 1:1 = **8 px high** (quarter of 32 px);
+  10x10 cell with 1-px outline; string 180x10 (was 720x40).
+- Placement clamp x 0..1096, y 0..710; above/below avoidance, same-frame
+  snapshot, valid-gated disappearance unchanged.
+
+### Pixel evidence
+
+`tb_circle_text.v` dumps the actual captured `hdmi_mixer` output at
+1 char/display-pixel to `logs/text_render.txt` and `.ppm` (converted to
+`.png`).  Per-character windows aligned to the 10-px cells show normal
+`C I R C L E`, digits `1 2 3 0 4 5` and signs `+ -`; the 1-px outline
+surrounds the glyphs (green 381 px, black 639 px, 100% of green pixels
+have a black neighbour within ±2 px) and does not erase `#` glyph pixels.
+All cases PASS: positive/negative/zero, four corners, invalid-box
+disappearance, A->B->invalid multi-frame.
+
+### Build
+
+Fresh tree `D:\FPGA\phase2_build_20261104`, final sources (diff-verified),
+EVT SDC, sequential syn then P&R:
+- Synthesis: WNS +0.204 ns, hold +0.114 ns, ERAM 86/108, DSP 27/40,
+  LUT6 9,845; critical path is the existing detector (`u_evt_circle/gate_ok`).
+- P&R: WNS +0.129 ns, TNS 0, 0 endpoints; hold +0.020 ns, 0 violations;
+  slices 18,218/21,216 (85.87%), LUT6 17,463/21,216 (82.31%),
+  ERAM 86/108, DSP 27/40; critical path is the existing
+  `u_evt_circle/u_acc` RAM read, not the text.
+- Unconstrained profile unchanged (1 I2C no-clock root, 37/68 IO delays,
+  4 dangling, 0 invalid).
+- New bit `camera_to_dsi_display_phase2_text8.bit`, SHA256
+  `f86560f64091fd64470b53f9ea2306795a6c43a10531f344ea6f21464a556ac2`
+  (not flashed; all older bits preserved).
+- No changes to the circle detector, R_MIN/EVMAX/thresholds, exposure,
+  POP/AWB/AE in this round.

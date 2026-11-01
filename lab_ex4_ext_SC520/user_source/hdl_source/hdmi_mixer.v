@@ -785,10 +785,10 @@ module hdmi_mixer #(
         begin
             txt_font = 8'h00;
             case (ch)
-                5'd28: case (row)  // C
+                5'd28: case (row)  // C (LSB-left: stem on the left)
                     3'd0: txt_font=8'h3C; 3'd1: txt_font=8'h66;
-                    3'd2: txt_font=8'h60; 3'd3: txt_font=8'h60;
-                    3'd4: txt_font=8'h60; 3'd5: txt_font=8'h60;
+                    3'd2: txt_font=8'h06; 3'd3: txt_font=8'h06;
+                    3'd4: txt_font=8'h06; 3'd5: txt_font=8'h06;
                     3'd6: txt_font=8'h66; default: txt_font=8'h3C;
                 endcase
                 5'd29: case (row)  // I
@@ -797,17 +797,17 @@ module hdmi_mixer #(
                     3'd4: txt_font=8'h18; 3'd5: txt_font=8'h18;
                     3'd6: txt_font=8'h18; default: txt_font=8'h7E;
                 endcase
-                5'd16: case (row)  // R
-                    3'd0: txt_font=8'h7C; 3'd1: txt_font=8'h66;
-                    3'd2: txt_font=8'h66; 3'd3: txt_font=8'h7C;
-                    3'd4: txt_font=8'h6C; 3'd5: txt_font=8'h66;
-                    3'd6: txt_font=8'h66; default: txt_font=8'h66;
+                5'd16: case (row)  // R (LSB-left, HUD shape)
+                    3'd0: txt_font=8'h1F; 3'd1: txt_font=8'h63;
+                    3'd2: txt_font=8'h63; 3'd3: txt_font=8'h1F;
+                    3'd4: txt_font=8'h1B; 3'd5: txt_font=8'h33;
+                    3'd6: txt_font=8'h63; default: txt_font=8'h63;
                 endcase
-                5'd24: case (row)  // L
-                    3'd0: txt_font=8'h60; 3'd1: txt_font=8'h60;
-                    3'd2: txt_font=8'h60; 3'd3: txt_font=8'h60;
-                    3'd4: txt_font=8'h60; 3'd5: txt_font=8'h60;
-                    3'd6: txt_font=8'h60; default: txt_font=8'h7E;
+                5'd24: case (row)  // L (LSB-left: stem on the left)
+                    3'd0: txt_font=8'h03; 3'd1: txt_font=8'h03;
+                    3'd2: txt_font=8'h03; 3'd3: txt_font=8'h03;
+                    3'd4: txt_font=8'h03; 3'd5: txt_font=8'h03;
+                    3'd6: txt_font=8'h03; default: txt_font=8'h7E;
                 endcase
                 5'd19: case (row)  // E
                     3'd0: txt_font=8'h7E; 3'd1: txt_font=8'h06;
@@ -904,6 +904,10 @@ module hdmi_mixer #(
         end
     endfunction
 
+    // 字模位序：显示按 bit=gx 取（gx 向右递增），因此字模必须是
+    // LSB-在左（bit0 为最左像素）。上板 CIЯↃ⅃E 的根因是 C/R/L
+    // 用了 MSB-在左的图案；E 和数字原本已是 LSB-在左。这里只把
+    // C/R/L 改为 LSB-左，并保留 E/数字的原图案，不再整体反转。
     function [7:0] txt_glyph_row;
         input [4:0] ch;
         input [3:0] y;
@@ -935,7 +939,7 @@ module hdmi_mixer #(
     // ==================================================================
     // 识别框旁的文字：CIRCLE X<sign><ddd> Y<sign><ddd>
     //   - 18 个字符槽，10x10 字体单元（8x8 字形 + 1 像素描边边），
-    //     放大 4 倍：字形高 32 显示像素，字距/行高 40
+    //     1:1 像素：字形高 8 显示像素，字距/行高 10
     //   - 绿色字形 + 黑色 8 邻域描边；背景透明
     //   - 坐标 = 圆心相对画面中心 (IMG_WIDTH/2, IMG_HEIGHT/2)：
     //       向右 X 正、向下 Y 正；始终显示符号，三位补零
@@ -944,28 +948,28 @@ module hdmi_mixer #(
     //   - 全部取自 I_det_* 同一显示帧快照（wrapper 在 S_hdmi_user 整组锁存）
     //   - 坐标/位置/字形查表分级寄存，避免长组合路径（与既有 OSD 同理）
     // ==================================================================
-    localparam integer TXT_SCALE = 4;
+    localparam integer TXT_SCALE = 1;                      // 8x8 glyph at 1x -> 8 px
     localparam integer TXT_CELL  = 10;                     // 8 glyph + 1 border
-    localparam integer TXT_ADV   = TXT_CELL * TXT_SCALE;   // 40
+    localparam integer TXT_ADV   = TXT_CELL * TXT_SCALE;   // 10
     localparam integer TXT_CHARS = 18;
-    localparam integer TXT_W     = TXT_CHARS * TXT_ADV;    // 720
-    localparam integer TXT_H     = TXT_CELL * TXT_SCALE;   // 40
+    localparam integer TXT_W     = TXT_CHARS * TXT_ADV;    // 180
+    localparam integer TXT_H     = TXT_CELL * TXT_SCALE;   // 10
     localparam integer TXT_GAP   = 4;
-    localparam integer TXT_XMAX  = IMG_WIDTH  - TXT_W - 4; // 556 (3-px text pipeline + margin)
-    localparam integer TXT_YMAX  = IMG_HEIGHT - TXT_H;     // 680
+    localparam integer TXT_XMAX  = IMG_WIDTH  - TXT_W - 4; // 1096 (3-px text pipeline + margin)
+    localparam integer TXT_YMAX  = IMG_HEIGHT - TXT_H;     // 710
 
-    // floor(x/40) for 0 <= x < 720: five restoring-division steps, no divider.
-    function [4:0] txt_div40;
+    // floor(x/10) for 0 <= x < 180: five restoring-division steps, no divider.
+    function [4:0] txt_div10;
         input [11:0] x;
         reg [12:0] rem;
         integer i;
         begin
             rem = {1'b0, x};
-            txt_div40 = 5'd0;
+            txt_div10 = 5'd0;
             for (i = 4; i >= 0; i = i - 1) begin
-                if (rem >= (13'd40 << i)) begin
-                    rem = rem - (13'd40 << i);
-                    txt_div40[i] = 1'b1;
+                if (rem >= (13'd10 << i)) begin
+                    rem = rem - (13'd10 << i);
+                    txt_div10[i] = 1'b1;
                 end
             end
         end
@@ -998,9 +1002,9 @@ module hdmi_mixer #(
 
     // Horizontal centre over the box, clamped to the active area.
     wire [12:0] S_txt_bcx = ({1'b0,I_det_minx} + {1'b0,I_det_maxx}) >> 1;
-    wire signed [13:0] S_txt_x0_raw = $signed({1'b0,S_txt_bcx}) - 14'sd360;
+    wire signed [13:0] S_txt_x0_raw = $signed({1'b0,S_txt_bcx}) - 14'sd90;
     wire [11:0] S_txt_x0 = S_txt_x0_raw[13] ? 12'd0 :
-                           (S_txt_x0_raw > 14'sd556) ? 12'd556 :
+                           (S_txt_x0_raw > 14'sd1096) ? 12'd1096 :
                            S_txt_x0_raw[11:0];
 
     // Above the box if it fits, otherwise below, otherwise clamp to bottom.
@@ -1041,11 +1045,11 @@ module hdmi_mixer #(
                       (S_y_2d >= S_txt_y0_q) && (S_y_2d < (S_txt_y0_q + TXT_H));
     wire [11:0] S_txt_ox = S_x_2d - S_txt_x0_q;
     wire [11:0] S_txt_oy = S_y_2d - S_txt_y0_q;
-    wire [4:0]  S_txt_slot = txt_div40(S_txt_ox);          // 0..17
-    wire [9:0]  S_txt_cellx = (S_txt_ox -
-                               (({5'd0,S_txt_slot} << 5) +
-                                ({5'd0,S_txt_slot} << 3))) >> 2;   // 0..9
-    wire [9:0]  S_txt_celly = S_txt_oy[5:2];               // 0..9
+    wire [4:0]  S_txt_slot = txt_div10(S_txt_ox);          // 0..17
+    wire [9:0]  S_txt_cellx = S_txt_ox -
+                              (({5'd0,S_txt_slot} << 3) +
+                               ({5'd0,S_txt_slot} << 1));  // 0..9
+    wire [9:0]  S_txt_celly = S_txt_oy[3:0];               // 0..9
 
     reg [4:0] S_txt_ch;
     always @(*) begin

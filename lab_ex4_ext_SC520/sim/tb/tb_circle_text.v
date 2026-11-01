@@ -16,7 +16,7 @@
 // ==========================================================================
 module tb_circle_text;
     localparam integer W = 1280, H = 720;
-    localparam integer TXT_W = 720, TXT_H = 40, TXT_XMAX = 556;
+    localparam integer TXT_W = 180, TXT_H = 10, TXT_XMAX = 1096;
 
     reg clk = 0, rst_n = 0;
     always #5 clk = ~clk;
@@ -230,6 +230,51 @@ module tb_circle_text;
         end
     endtask
 
+    // Dump the captured text region at 1 char per display pixel.  This is the
+    // pixel-level visual check: it shows the actual hdmi_mixer output, so a
+    // mirrored glyph or a bad bit order is visible per character.
+    task dump_text;
+        input integer x0, y0;
+        input [8*32-1:0] tag;
+        integer f, xx, yy;
+        begin
+            f = $fopen("logs/text_render.txt", "a");
+            $fwrite(f, "=== %0s x0=%0d y0=%0d ===\n", tag, x0, y0);
+            for (yy = y0; yy < y0+TXT_H; yy = yy + 1) begin
+                for (xx = x0; xx < x0+TXT_W; xx = xx + 1) begin
+                    if (xx >= 0 && xx < W && yy >= 0 && yy < H) begin
+                        if (cap[yy*W+xx] == 24'h00FF00)      $fwrite(f, "G");
+                        else if (cap[yy*W+xx] == 24'h000000) $fwrite(f, "k");
+                        else                                  $fwrite(f, ".");
+                    end
+                    else $fwrite(f, ".");
+                end
+                $fwrite(f, "\n");
+            end
+            $fclose(f);
+        end
+    endtask
+
+    task dump_ppm;
+        input integer x0, y0;
+        integer f, xx, yy;
+        begin
+            f = $fopen("logs/text_render.ppm", "w");
+            $fwrite(f, "P3\n%0d %0d\n255\n", TXT_W, TXT_H);
+            for (yy = y0; yy < y0+TXT_H; yy = yy + 1) begin
+                for (xx = x0; xx < x0+TXT_W; xx = xx + 1) begin
+                    if (xx >= 0 && xx < W && yy >= 0 && yy < H) begin
+                        if (cap[yy*W+xx] == 24'h00FF00)      $fwrite(f, "0 255 0\n");
+                        else if (cap[yy*W+xx] == 24'h000000) $fwrite(f, "0 0 0\n");
+                        else                                  $fwrite(f, "32 32 32\n");
+                    end
+                    else $fwrite(f, "32 32 32\n");
+                end
+            end
+            $fclose(f);
+        end
+    endtask
+
     localparam [4:0] G_C=5'd28, G_I=5'd29, G_R=5'd16, G_L=5'd24, G_E=5'd19,
                      G_SP=5'd15, G_X=5'd14, G_Y=5'd22, G_PLUS=5'd30, G_MINUS=5'd31,
                      G_0=5'd4, G_1=5'd5, G_2=5'd6, G_3=5'd7,
@@ -247,8 +292,8 @@ module tb_circle_text;
         set_exp18(G_C,G_I,G_R,G_C,G_L,G_E,G_SP,G_X,G_PLUS,
                   G_1,G_2,G_3,G_SP,G_Y,G_MINUS,G_0,G_4,G_5);
         drive_frame();
-        x0 = 600 - TXT_W/2;          // 240
-        y0 = 400 - (TXT_H + 4);      // 356
+        x0 = 600 - TXT_W/2;          // 510
+        y0 = 400 - (TXT_H + 4);      // 386
         check(u_dut.S_txt_x0_q == x0 && u_dut.S_txt_y0_q == y0,
               "placement above the box / centred");
         check(u_dut.S_txt_on_q == 1'b1, "text enabled while box valid");
@@ -257,17 +302,20 @@ module tb_circle_text;
         $display("  text: green=%0d black=%0d gbox=(%0d,%0d)-(%0d,%0d) bbox=(%0d,%0d)-(%0d,%0d)",
                  gcnt, bcnt, gminx, gminy, gmaxx, gmaxy,
                  bminx, bminy, bmaxx, bmaxy);
-        check(gcnt > 500 && bcnt > 500, "green glyphs + black outline present");
+        check(gcnt > 100 && bcnt > 100, "green glyphs + black outline present");
         // The C glyph's left bearing is font column 1 and the 1-font-pixel
         // outline is at cell column 0; at 4x plus a 3-cycle pipeline skew the
         // first green pixel is ~x0+10 and the first black pixel ~x0+7.
-        check(bminx >= x0 && bminx <= x0+12 && bminy >= y0 && bminy <= y0+6,
+        check(bminx >= x0 && bminx <= x0+8 && bminy >= y0 && bminy <= y0+2,
               "text aligns to the placed top-left (bearing + pipeline skew)");
+        check((gmaxy - gminy + 1) == 8, "glyph height is 8 display pixels");
         check(gmaxx <= x0+TXT_W && gmaxy <= y0+TXT_H,
               "text stays inside its region");
         scan_outline(x0, y0);
         $display("  outline: %0d%% of green pixels have a black neighbour", oratio);
         check(oratio > 20, "outline surrounds the glyphs");
+        dump_text(bminx, bminy, "center X+123 Y-045");
+        dump_ppm(bminx, bminy);
 
         // ---------------- 2. zero: X+000 / Y+000 ------------------------
         $display("\n-- zero: CIRCLE X+000 Y+000 --");
@@ -278,7 +326,7 @@ module tb_circle_text;
         x0 = 640 - TXT_W/2; y0 = 300 - (TXT_H + 4);
         check_seq("glyph sequence X+000 Y+000");
         scan_text(x0, y0);
-        check(gcnt > 500 && bcnt > 500, "zero coordinate text rendered");
+        check(gcnt > 100 && bcnt > 100, "zero coordinate text rendered");
 
         // ---------------- 3. X-045 / Y+123 ------------------------------
         $display("\n-- negative X: CIRCLE X-045 Y+123 --");
@@ -289,7 +337,8 @@ module tb_circle_text;
         x0 = 595 - TXT_W/2; y0 = 383 - (TXT_H + 4);
         check_seq("glyph sequence X-045 Y+123");
         scan_text(x0, y0);
-        check(gcnt > 500 && bcnt > 500, "negative X text rendered");
+        check(gcnt > 100 && bcnt > 100, "negative X text rendered");
+        dump_text(bminx, bminy, "negative X-045 Y+123");
 
         // ---------------- 4. four corners: clamp / no clipping ----------
         $display("\n-- four corners --");
@@ -326,7 +375,7 @@ module tb_circle_text;
         $display("\n-- invalid box: text disappears --");
         set_det(500, 700, 400, 600, 763, 315, 1'b0);
         drive_frame();
-        scan_text(240, 356);
+        scan_text(510, 386);
         check(gcnt == 0 && bcnt == 0, "no text when I_det_valid=0");
         check(u_dut.S_txt_on_q == 1'b0, "text enable cleared");
 
@@ -344,16 +393,17 @@ module tb_circle_text;
                   G_0,G_4,G_5,G_SP,G_Y,G_MINUS,G_3,G_3,G_0);
         drive_frame();
         check_seq("frame B text (not stale A)");
-        scan_text(235, 64);
-        check(gcnt > 500, "frame B text rendered at B position");
-        scan_text(240, 356);   // A's old region must be empty
+        scan_text(505, 64);
+        check(gcnt > 100, "frame B text rendered at B position");
+        dump_text(bminx, bminy, "frame B X-045 Y-330");
+        scan_text(510, 386);   // A's old region must be empty
         check(gcnt == 0, "frame A region empty after B");
         set_det(495, 695, 0, 60, 595, 30, 1'b0);
         drive_frame();
         check(u_dut.S_txt_on_q == 1'b0, "invalid frame: text enable cleared");
         // x>=300 avoids the top-left HUD (x=24..264); any green here would be
         // stale B text, not another overlay.
-        scan_text(300, 64);
+        scan_text(505, 64);
         check(gcnt == 0, "invalid frame removes B text");
 
         $display("\n================================================");
