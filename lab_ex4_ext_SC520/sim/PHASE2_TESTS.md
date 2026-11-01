@@ -249,3 +249,73 @@ is always sampled while stable; `O_evt` is not part of the CDC path.
 - Build: syn WNS +0.246 ns; P&R WNS +0.164 ns, hold +0.020 ns, 0 violations,
   ERAM 86/108, DSP 27/40, slices 17,803/21,216.  New independent bit
   `camera_to_dsi_display_phase2_diag.bit` SHA256 `c1570200...e522a` (not flashed).
+
+## rev 2i — HUD diagnostics: drop vs overflow, result-snapshot count
+
+### Defects fixed
+
+- `O_det_flags[7]` was `drop_seen | proc_drop | proc_ovf`, so the board could
+  not tell a skipped frame from a real EVMAX overflow.  `proc_drop` was dead
+  (a skipped frame never reaches `S_DONE`, so it can never produce a result).
+- `O_det_cnt` was `S_ev_cnt[9:0]`: a 1536-event frame wrapped to 512, 1000..1023
+  rendered as the wrong three-digit value, and `O_count_dbg` was updated at
+  `frame_end`, i.e. before the result was ready.  The HUD could therefore show
+  a newer frame's count next to an older frame's flags/box.
+- `drop_seen` was set only when `proc_busy` was still high at `frame_end`, so a
+  skipped frame whose processing happened to finish inside it was not reported.
+
+### RTL change
+
+- New `isp_evt_hud_map.v` (used by `isp_top` only when `EVT_CIRCLE=1`):
+  `[7]=proc_ovf`, `[6]=live`, `[5]=drop_seen`, `[4:2]=0`, `[1]=pass`,
+  `[0]=valid`; `O_det_cnt = min(I_cnt, 999)` (saturate, not truncate).
+  999 means ">=999".  valid/pass semantics are unchanged.
+- `isp_circle_hough2`: `O_count_dbg` is latched in `S_DONE` with
+  `O_valid/O_flags/bbox` (exact 0..EVMAX); `drop_seen` is now set by the
+  per-frame `cap_drop` marker at `frame_end`; dead `proc_drop` removed.
+
+### Bounded tests (`tb_diag_hud.v`)
+
+Instantiates the real detector + real HUD mapping.  All checks PASS.
+
+| Case | Result |
+|---|---|
+| full load 1536, real 1.725M-cycle frame boundary | count=1536, HUD cnt=999, ovf=0, live=1, pass/valid=1 |
+| over limit 1537 | captured count=1536, ovf=1, drop=0, short-circuit, box held |
+| skipped frame (started while busy) | no `O_evt`; next result keeps its own count and sets drop=1 |
+| drop clears on next processed result | drop=0, own count |
+| bounded hold | 2 -> 1 -> 0 -> clear; overflow ages the hold; skip does not |
+| reset | count/flags/valid cleared |
+
+**Throughput correction:** measured full-load processing is **2,596,848 cycles**
+from frame start (1.50 frame periods), not the ~1.37M figure estimated in
+rev 2h.  Per-event cost measured from r60/r100/r160 is ~1,526 cycles/event plus
+~246k fixed.  Therefore a 1536-event frame does NOT finish inside one frame:
+the next real frame is skipped, and the HUD now reports `drop=1, ovf=0`
+instead of hiding it.  This is a diagnostic result, not a claim that low
+contrast is fixed.
+
+### Regression
+
+- `tb_handoff2`: PASS (updated to print `drop_seen`; `proc_drop` removed).
+- `tb_multiframe_e2e`: PASS.  f2 is skipped with no `O_evt`; f3's held result
+  is `flags=08` (drop=1), f4 returns to `flags=00`; glitch samples = 0.
+- Event-level matrix r25/r26/r60/r100/r160/empty/checker: PASS.  Checker
+  (2048 events) reports count=1536 and `flags=02` (ovf), per the new layout.
+- Original regressions `tb_pop` / `tb_gray_share` / `tb_det_result` /
+  `tb_ae_i2c`: PASS.
+
+### Build (rev 2i)
+
+Fresh tree `D:\FPGA\phase2_build_20261102`, final sources, EVT SDC:
+- Synthesis: WNS +0.041 ns, hold +0.114 ns, ERAM 86/108, DSP 27/40.
+  (The synthesis critical path moved to the pre-existing
+  `u_isp_top/u_chroma_denoise`, not the new HUD logic.)
+- P&R: WNS +0.231 ns, TNS 0, 0 endpoints; hold +0.020 ns, 0 violations;
+  slices 17,787/21,216 (83.84%), ERAM 86/108, DSP 27/40,
+  LUT6 17,058/21,216 (80.40%).
+- Unconstrained profile identical to phase 1: 1 I2C no-clock-root net,
+  37 input / 68 output ports without IO delay, 0 invalid constraints.
+- New bit `camera_to_dsi_display_phase2_hud.bit`, SHA256
+  `18a747cf3f2c85ddbba2408940fdf6a961d7a5b6d66bda21b0825ceedb0c5030`
+  (not flashed; older bits untouched).

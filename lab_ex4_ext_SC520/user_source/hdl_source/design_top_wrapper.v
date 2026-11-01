@@ -154,7 +154,9 @@ module design_top_wrapper (
     wire [11:0] S_det_minx, S_det_maxx, S_det_miny, S_det_maxy;
     wire        S_det_valid, S_det_cand;
     wire [9:0]  S_det_cnt;
-    wire [7:0]  S_det_flags;   // 圆形诊断 {ovf,live,chord,rows,asp,size,pass,valid}
+    // 圆形诊断。EVT_CIRCLE=0: {ovf,live,chord,rows,asp,size,pass,valid};
+    // EVT_CIRCLE=1: {ovf,live,drop,0,0,0,pass,valid}（见 isp_evt_hud_map）。
+    wire [7:0]  S_det_flags;
     // Red ball has its own result and handshake; yellow CDC remains unchanged.
     wire [11:0] S_red_minx, S_red_maxx, S_red_miny, S_red_maxy;
     wire S_red_valid, S_red_cand, S_red_update;

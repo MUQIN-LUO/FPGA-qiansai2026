@@ -45,9 +45,9 @@ module tb_handoff2;
     integer evtcnt = 0;
     always @(posedge clk) if (O_evt) begin
         evtcnt = evtcnt + 1;
-        $display("  EVT t=%0t valid=%b r=%0d hold=%0d best=%b cnt=%0d capdrop=%b procdrop=%b",
+        $display("  EVT t=%0t valid=%b r=%0d hold=%0d best=%b cnt=%0d capdrop=%b dropseen=%b flags=%02h",
                  $time, O_valid, O_r, u_dut.hold_cnt, u_dut.best_ok, u_dut.proc_count,
-                 u_dut.cap_drop, u_dut.proc_drop);
+                 u_dut.cap_drop, u_dut.drop_seen, O_flags);
     end
 
     task pulse_start; begin

@@ -197,8 +197,12 @@ module isp_top #(
     output wire [11:0] O_det_maxy	,
     output wire        O_det_valid	,   // 尺寸+形状 全部通过（迟滞点亮的绿色状态）
     output wire        O_det_cand	,   // 本帧尺寸通过、形状未过（橙色候选）
-    output wire [9:0]  O_det_cnt		,   // 命中像素数 / 16（调试显示用）
-    output wire [7:0]  O_det_flags	,   // 圆形诊断 {ovf,live,chord,rows,asp,size,pass,valid}
+    // EVT_CIRCLE=1: processed-frame event count, saturated to 0..999 (HUD
+    // three-digit limit; 999 means ">=999").  EVT_CIRCLE=0: 命中像素数 / 16.
+    output wire [9:0]  O_det_cnt		,
+    // EVT_CIRCLE=1 layout {ovf,live,drop,0,0,0,pass,valid}, see isp_evt_hud_map;
+    // EVT_CIRCLE=0 original CCL layout {ovf,live,chord,rows,asp,size,pass,valid}.
+    output wire [7:0]  O_det_flags	,
     output reg [7:0]  O_rgb_r		,   // 中心 64x64 区域平均色（白平衡标定 / 验证用）
     output reg [7:0]  O_rgb_g		,
     output reg [7:0]  O_rgb_b		,
@@ -1658,23 +1662,35 @@ awb #(
     assign O_det_miny  = EVT_CIRCLE ? S_ev_miny : S_ccl_miny;
     assign O_det_maxy  = EVT_CIRCLE ? S_ev_maxy : S_ccl_maxy;
     // HUD layout is unchanged: {ovf,live,chord,rows,asp,size,pass,valid}.
-    // The event detector maps only the bits that exist for it:
-    //   [7] ovf  = drop_seen | proc_drop   (frame dropped / processed overflow)
-    //   [6] live = event count != 0
-    //   [5:2]    = 0 (chord/rows/asp/size are CCL-specific)
+    // The event detector has no chord/rows/asp/size criteria; its four free
+    // positions are used for independent diagnostics, and the processed-frame
+    // count is latched with the result:
+    //   [7] ovf  = proc_ovf        (actual EVMAX overflow of the processed frame)
+    //   [6] live = result count != 0
+    //   [5] drop = drop_seen       (>=1 frame skipped since the last result)
+    //   [4:2]    = 0
     //   [1] pass = best_ok, [0] valid = O_valid
-    // HUD layout {ovf,live,chord,rows,asp,size,pass,valid}: expose overflow and
-    // dropped frames in [7] so a long miss caused by EVMAX overflow is visible
-    // on the board (it used to be dropped silently).
-    assign O_det_flags = EVT_CIRCLE ?
-        {(S_ev_flags[3] | S_ev_flags[2] | S_ev_flags[1]), (S_ev_cnt != 12'd0),
-         4'b0000, S_ev_flags[0], S_ev_ok_v} : S_ccl_flags;
-    assign O_det_cnt   = EVT_CIRCLE ? S_ev_cnt[9:0] : S_ccl_cnt;
+    // The old mapping merged drop_seen/proc_drop/proc_ovf into [7], so the
+    // board could not tell a skipped frame from an overflow.
+    wire [7:0] S_ev_hud_flags;
+    wire [9:0] S_ev_hud_cnt;
+    isp_evt_hud_map u_evt_hud_map (
+        .I_flags (S_ev_flags),
+        .I_cnt   (S_ev_cnt),
+        .I_valid (S_ev_ok_v),
+        .O_flags (S_ev_hud_flags),
+        .O_cnt   (S_ev_hud_cnt)
+    );
+    assign O_det_flags = EVT_CIRCLE ? S_ev_hud_flags : S_ccl_flags;
+    assign O_det_cnt   = EVT_CIRCLE ? S_ev_hud_cnt   : S_ccl_cnt;
 
     // 圆形诊断（板测 HUD）：
-    //   flags = {ovf,live,chord,rows,asp,size,pass,valid}
-    //   判据位只在 pass=1 或 cand=1 时有效；两者都为 0 时只表示
-    //   "有/无连通域(live)、是否标签溢出(ovf)"，不能据此声称具体失败原因。
+    //   EVT_CIRCLE=0: flags = {ovf,live,chord,rows,asp,size,pass,valid}
+    //     判据位只在 pass=1 或 cand=1 时有效；两者都为 0 时只表示
+    //     "有/无连通域(live)、是否标签溢出(ovf)"，不能据此声称具体失败原因。
+    //   EVT_CIRCLE=1: flags = {ovf,live,drop,0,0,0,pass,valid}
+    //     ovf 是"本处理帧事件数>EVMAX"，drop 是"自上一结果以来有帧被跳过"，
+    //     两者独立；cnt 为 min(本处理帧事件数,999)。
 
     reg [95:0] raw_d1, raw_d2, pop_d1, pop_d2;
     reg [31:0] S_y4_d2;          // 共享 Y 的第 2 拍，供 GRAY 显示

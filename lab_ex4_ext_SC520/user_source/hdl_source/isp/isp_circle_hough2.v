@@ -85,6 +85,10 @@ module isp_circle_hough2 #(
     output reg  [11:0] O_minx, O_maxx, O_miny, O_maxy,
     output reg  [7:0]  O_flags,
     output reg  [15:0] O_score,
+    // Event count of the frame that produced the current result.  Latched in
+    // S_DONE together with O_valid/O_flags/bbox, so it always belongs to the
+    // SAME processed frame (it used to update at frame_end, i.e. one frame
+    // ahead of the result).  Exact range: 0..EVMAX (EV_AW=11 -> <=2048).
     output reg  [11:0] O_count_dbg
 );
     localparam integer ACC_N = ACC_W * ACC_H;
@@ -147,7 +151,11 @@ module isp_circle_hough2 #(
     reg        cap_active, cap_ovf, cap_drop;
     reg        proc_busy;
     reg [12:0] proc_count;
-    reg        proc_ovf, proc_drop, proc_start, proc_done;
+    reg        proc_ovf, proc_start, proc_done;
+    // Sticky per-result diagnostic: at least one frame was skipped (started
+    // while the core was still busy) since the previous processed result.
+    // Cleared when that result is emitted.  A skipped frame itself never
+    // produces O_evt, so it cannot be reported on its own result.
     reg        drop_seen;
     reg [1:0]  hold_cnt;
     reg [11:0] h_cx, h_cy, h_r, h_minx, h_maxx, h_miny, h_maxy;
@@ -444,7 +452,7 @@ module isp_circle_hough2 #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             wr_ptr<=0; wr_cnt<=0; cap_active<=0; cap_ovf<=0; cap_drop<=0;
-            proc_busy<=0; proc_count<=0; proc_ovf<=0; proc_drop<=0;
+            proc_busy<=0; proc_count<=0; proc_ovf<=0;
             proc_start<=0; drop_seen<=0;
             ev_we<=0; ev_wa<=0; ev_wd<=0;
         end
@@ -468,27 +476,36 @@ module isp_circle_hough2 #(
                 end
                 else cap_ovf <= 1'b1;
             end
-            if (frame_end) begin
-                cap_active  <= 1'b0;
-                O_count_dbg <= wr_cnt[11:0];
-            end
-            if (frame_end && proc_busy) drop_seen <= 1'b1;
-            else if (proc_done)         drop_seen <= 1'b0;
+            if (frame_end) cap_active <= 1'b0;
+            // cap_drop is this frame's "started while busy" marker (sampled at
+            // its frame_start), so a frame whose processing finishes before its
+            // own frame_end is still reported as skipped.  The old condition
+            // (proc_busy at frame_end) silently lost that case.  A skipped
+            // frame never reaches S_DONE, so it cannot be reported by itself;
+            // the flag rides on the next processed result.
+            if (frame_end && cap_drop) drop_seen <= 1'b1;
+            else if (proc_done)        drop_seen <= 1'b0;
             if (proc_done) proc_busy <= 1'b0;
             else if (frame_end && !proc_busy && !cap_drop) begin
                 proc_count  <= wr_cnt;
                 proc_ovf    <= cap_ovf;
-                proc_drop   <= cap_drop;
                 proc_start  <= 1'b1;
                 proc_busy   <= 1'b1;
             end
         end
     end
 
+    // * Current sticky skip, or a skipped frame ending on this very cycle.
+    //   The latter is normally captured by drop_seen, but if it coincides with
+    //   S_DONE the next-cycle proc_done clear would erase it before any result
+    //   reports it, so include the live condition in the result byte.
+    wire S_drop_flag = drop_seen | (frame_end && cap_drop);
+
     // =================== main FSM ========================================
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            st<=S_IDLE; O_evt<=0; O_valid<=0; O_flags<=0; O_score<=0; proc_done<=0;
+            st<=S_IDLE; O_evt<=0; O_valid<=0; O_flags<=0; O_score<=0; O_count_dbg<=0;
+            proc_done<=0;
             O_cx<=0; O_cy<=0; O_r<=0;
             O_minx<=0; O_maxx<=0; O_miny<=0; O_maxy<=0;
             a<=0; ev_i<=0; k<=1; pol<=0; cand<=0; iter<=0; pass<=P_INIT;
@@ -533,7 +550,7 @@ module isp_circle_hough2 #(
                     // would reuse stale best_ok/best_* and refresh the hold
                     best_ok <= 1'b0; best_r <= 12'd0; best_cx <= 12'd0;
                     best_cy <= 12'd0; best_score <= 16'd0;
-                    if (proc_drop || proc_ovf || (proc_count == 0)) st <= S_DONE;
+                    if (proc_ovf || (proc_count == 0)) st <= S_DONE;
                     else begin a <= 0; st <= S_CLR; end
                 end
             end
@@ -968,7 +985,8 @@ module isp_circle_hough2 #(
                     h_miny <= (best_cy > best_r) ? (best_cy - best_r) : 0;
                     h_maxy <= (((best_cy + best_r) < IMG_H) ? (best_cy + best_r) : IMG_H-1);
                     h_score <= best_score;
-                    O_flags <= {4'd0, drop_seen, proc_drop, proc_ovf, 1'b1};
+                    // [3]=drop, [2]=0 (reserved), [1]=proc_ovf, [0]=pass
+                    O_flags <= {4'd0, S_drop_flag, 1'b0, proc_ovf, 1'b1};
                 end
                 else if (hold_cnt != 2'd0) begin
                     hold_cnt <= hold_cnt - 1'b1;
@@ -977,15 +995,20 @@ module isp_circle_hough2 #(
                     O_minx <= h_minx; O_maxx <= h_maxx;
                     O_miny <= h_miny; O_maxy <= h_maxy;
                     O_score <= h_score;
-                    O_flags <= {4'd0, drop_seen, proc_drop, proc_ovf, 1'b0};
+                    O_flags <= {4'd0, S_drop_flag, 1'b0, proc_ovf, 1'b0};
                 end
                 else begin
                     O_valid <= 1'b0;
                     O_cx <= 0; O_cy <= 0; O_r <= 0;
                     O_minx <= 0; O_maxx <= 0; O_miny <= 0; O_maxy <= 0;
                     O_score <= 0;
-                    O_flags <= {4'd0, drop_seen, proc_drop, proc_ovf, 1'b0};
+                    O_flags <= {4'd0, S_drop_flag, 1'b0, proc_ovf, 1'b0};
                 end
+                // Result snapshot: count, flags, valid, bbox and pass are all
+                // written on this same S_DONE edge.  proc_count cannot change
+                // while proc_done=0/proc_busy=1, so it is the processed frame's
+                // exact captured count (EVMAX when the frame overflowed).
+                O_count_dbg <= proc_count[11:0];
                 O_evt <= 1'b1;
                 proc_done <= 1'b1;
                 st <= S_IDLE;

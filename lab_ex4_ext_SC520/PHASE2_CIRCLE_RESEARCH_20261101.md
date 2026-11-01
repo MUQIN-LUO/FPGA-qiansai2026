@@ -770,6 +770,9 @@ wrapper 在 ISP 帧事件处整组 staging（toggle/ack 跨域），事件检测
 - **EVMAX 1024 → 1536**：给纹理/噪声场景更多事件余量，减少“整帧溢出→整帧
   判无效”的长漏检；处理预算由 1002 事件 897k 周期外推，1536 事件约 1.37M
   周期 < 帧预算 1.725M（估算，未直接实测 1536 事件非溢出帧）。
+  **该估算已被第 13.3 节实测否定**：当前 RTL 满载 1536 事件需
+  **2,596,848 周期（1.50 帧）**，并不能在一帧内处理完；下一帧会被跳过
+  （HUD `drop=1`、`ovf=0`）。EVMAX 未在本轮改动。
 - **HUD 暴露溢出/丢帧**：`O_det_flags[7] = drop_seen | proc_drop | proc_ovf`
   （原来 proc_ovf 未映射，溢出在 HUD 上不可见）；[6]=live、[1]=pass、
   [0]=valid，[5:2]=0。事件数仍在 `O_det_cnt`。下一轮上板可直接判断是
@@ -799,3 +802,107 @@ wrapper 在 ISP 帧事件处整组 staging（toggle/ack 跨域），事件检测
 - 上板请观察 `O_det_cnt`（事件数）与 flags[7]（溢出/丢帧）：若绿球帧 事件数
   很低且无 ovf，即确认是对比度/事件数限制；若 ovf=1，则是纹理溢出，需要
   进一步的前端/门控设计。
+
+## 13. HUD 诊断修复与满载实测（2026-11-01 夜，rev 2i）
+
+### 13.1 独立核对：原 HUD 为什么不能判定
+
+1. **溢出与跳帧被合并**：`O_det_flags[7] = drop_seen | proc_drop | proc_ovf`。
+   上板看到 [7]=1 时无法区分“事件数超过 EVMAX”和“整帧被跳过”。
+   进一步核对发现 `proc_drop` 是死信号：被跳过的帧永远不会进入 `S_DONE`，
+   所以任何一次结果里它都不可能为 1。
+2. **计数截断/回绕且跨帧**：`O_det_cnt = S_ev_cnt[9:0]`。EVMAX=1536 时
+   1536 → 512；1000..1023 在三位十进制 HUD 上会被错误解码。更严重的是
+   `O_count_dbg` 在 `frame_end` 更新，而 flags/valid/bbox 在 `S_DONE` 更新，
+   两者可能相差一整帧；wrapper 又在帧事件处整组取样，于是 HUD 可能显示
+   “新帧的计数 + 旧帧的框/标志”。
+3. **跳帧漏报**：旧 `drop_seen` 只在 `frame_end && proc_busy` 时置位。
+   若某帧在 `frame_start` 时内核忙（`cap_drop=1`），但处理在该帧
+   `frame_end` 之前就结束，这一帧实际被跳过却不会置位。
+4. **处理时间估算错误**：12.4 节用“1002 事件 897k 周期”外推 1536 事件
+   ≈1.37M 周期。实测当前 RTL 为 **≈1,526 周期/事件 + ≈246k 固定开销**，
+   1536 事件需 **2,596,848 周期（1.50 帧）**，并不在一帧内完成。
+
+### 13.2 修复（不改 valid/pass 语义）
+
+- 新增 `isp_evt_hud_map.v`，EVT_CIRCLE=1 时 HUD 位布局显式改为：
+
+| bit | EVT 含义 | 旧 EVT 含义 |
+|---|---|---|
+| [7] | `proc_ovf`：本处理帧事件数 > EVMAX（实际溢出） | drop/ovf 合并 |
+| [6] | `live`：本处理帧计数 != 0（同一快照） | 帧尾计数 |
+| [5] | `drop_seen`：自上一处理结果以来至少跳过一帧 | 0 |
+| [4:2] | 0（CCL 的 chord/rows/asp/size 位置） | 0 |
+| [1] | `pass`（不变） | pass |
+| [0] | `valid`（不变） | valid |
+
+- `O_det_cnt = min(事件数, 999)`：**饱和而非截断**。HUD 为三位十进制，
+  比较器只覆盖 0..999，因此 999 表示“≥999”；满载 1536 显示 999，
+  不再回绕成 512。检测器内部 `O_count_dbg` 仍为 12 位精确计数。
+- `isp_circle_hough2`：`O_count_dbg` 改在 `S_DONE` 与
+  `O_valid/O_flags/bbox` 同拍锁存；`drop_seen` 改由该帧自己的
+  `cap_drop` 在 `frame_end` 置位（覆盖“处理在帧内结束”的跳过帧）；
+  删除死信号 `proc_drop`；若被跳过帧的 `frame_end` 恰与 `S_DONE` 同拍，
+  结果字节直接 OR 入该拍条件，避免下一拍清除导致漏报。
+- 显示 EDGE_TH、检测 EV_TH/EVMAX、POP/AWB/AE 均未改。
+
+### 13.3 有界仿真（全部 PASS）
+
+新增 `tb_diag_hud.v`：直接实例化真实 `isp_circle_hough2` + 真实
+`isp_evt_hud_map`，按 1.725M 周期（1280×720@60 @103.5 MHz）的真实帧边界
+驱动。结果：
+
+| 用例 | 结果 |
+|---|---|
+| 满载 1536（真实帧边界） | 计数=1536、HUD=999、ovf=0、live=1、pass/valid=1；处理 **2,596,848 周期 = 1.50 帧**，下一帧被跳过 → drop=1, ovf=0 |
+| 超限 1537 | 捕获 1536、ovf=1、drop=0、`S_DONE` 短路、上一框保持 |
+| 跳帧（忙时开始） | 被跳过帧无 `O_evt`；下一结果保留自己的计数 148（不是 0），drop=1 |
+| 跳帧后的下一处理结果 | drop 自动清零，计数/`live` 为该帧自己的 |
+| 有界保持 | 2→1→0→清除；溢出帧老化保持；跳过帧不老化 |
+| 复位 | 计数/flags/valid 清零 |
+
+**吞吐结论（如实记录）**：满载 1536 不在一帧内完成。EVMAX=1536 的收益是
+“不把 1000..1536 事件整帧判溢出”，代价是该帧处理跨到下一帧、下一帧被跳过；
+现在 HUD 会明确显示 `drop=1, ovf=0`，不再与溢出混淆。该行为本轮**未改**。
+
+回归（最终 RTL）：
+- `tb_handoff2` PASS（同步改为打印 `drop_seen`，`proc_drop` 已删除）。
+- `tb_multiframe_e2e` PASS：f2 被跳过且无 `O_evt`；f3 保持结果
+  `flags=08`（drop=1），f4 恢复 `flags=00`；glitch=0。
+- 事件级矩阵 r25/r26/r60/r100/r160/empty/checker 全 PASS；
+  checker 计数=1536、`flags=02`（ovf），符合新布局。
+- 原功能 `tb_pop` / `tb_gray_share` / `tb_det_result` / `tb_ae_i2c` 全 PASS。
+
+### 13.4 独立构建（新目录、最终源码、EVT SDC）
+
+构建目录 `D:\FPGA\phase2_build_20261102`（全新复制的工作树源码；
+`settings.cfg` 的 `SDCList` = `camera_to_dsi_display_evt.sdc`；先
+`import_device ph1_35p.db -package PH1P35MDG324 -speed 3` 再跑 TD 自带
+`DefaultFlow.tcl`，未复用旧 run 的 db）。
+
+| 阶段 | 结果 |
+|---|---|
+| 综合 | WNS **+0.041 ns**、TNS 0；Hold WNS +0.114 ns；ERAM 86/108、DSP 27/40 |
+| 布局布线 | Setup WNS **+0.231 ns**、TNS 0、违例端点 0；Hold WNS **+0.020 ns**、TNS 0、0 违例 |
+| 资源 | slices 17,787/21,216（83.84%）、ERAM 86/108、DSP 27/40、LUT6 17,058/21,216（80.40%）、slice reg 12,971/42,432（30.57%） |
+| 未约束项 | 与第一阶段/上一版一致：1 条 I2C 内部无时钟根网络、37 输入/68 输出无 IO delay、0 条无效约束；MCP/SMD 仅 DDR gray-code 约束且被时钟组忽略 |
+
+综合阶段 WNS 低于上一版的 +0.246 ns：关键路径变为**原有的**
+`u_isp_top/u_chroma_denoise`（10 级逻辑、fanout 24），不是新增
+`isp_evt_hud_map`/EVT 检测器；布线后恢复到 +0.231 ns。新增逻辑的代价
+（相对上一版综合面积）约 +29 LUT6、+4 寄存器，ERAM/DSP 不变。
+
+**新位流（未烧录）**：
+`D:\FPGA\phase2_build_20261102\deliverable\camera_to_dsi_display_phase2_hud.bit`
+SHA256 `18a747cf3f2c85ddbba2408940fdf6a961d7a5b6d66bda21b0825ceedb0c5030`。
+旧位流 `78bced1a…`、`326e28e4…`、`c1570200…` 均保留不动。
+
+### 13.5 未闭环
+
+- **低对比度/绿球未解决**：本轮只修诊断可读性；事件数与对比度的限制
+  （12.2 节）仍在，不得声称已修复。
+- 满载 1536 跨帧（1.50 帧）是已知限制。若后续要保证满载不跳帧，
+  需要把处理压到 ≤1 帧（约 ≤960 事件的门限或吞吐优化），这属于算法/时序
+  取舍，本轮未改 EVMAX。
+- 上板复测（新 bit 未烧录）才能确认 HUD 的实际可读性与绿球帧的
+  `cnt/ovf/drop` 组合。

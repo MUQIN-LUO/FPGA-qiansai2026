@@ -25,7 +25,9 @@ module hdmi_mixer #(
     input wire        I_det_valid,
     input wire        I_det_cand,       // 颜色+面积通过但形状未过（调试用）
     input wire[9:0]   I_det_cnt,        // 命中像素数/16（调试显示）
-    input wire[7:0]   I_det_flags,      // 圆形诊断 {ovf,live,chord,rows,asp,size,pass,valid}
+    // 圆形诊断。EVT_CIRCLE=0: {ovf,live,chord,rows,asp,size,pass,valid};
+    // EVT_CIRCLE=1: {ovf,live,drop,0,0,0,pass,valid} (isp_evt_hud_map)。
+    input wire[7:0]   I_det_flags,
     input wire        I_red_valid,
     input wire[11:0]  I_red_minx, I_red_maxx, I_red_miny, I_red_maxy,
     input wire[7:0]   I_avg_r,          // 中心区域平均色（调试显示）
@@ -479,7 +481,9 @@ module hdmi_mixer #(
             end
             3'd7: begin
                 // 第 7 行：圆形诊断 D<flags hex>C<cnt>
-                //   flags[7:0]={ovf,live,chord,rows,asp,size,pass,valid}
+                //   CCL : flags[7:0]={ovf,live,chord,rows,asp,size,pass,valid}
+                //   EVT : flags[7:0]={ovf,live,drop,0,0,0,pass,valid}
+                //   EVT 的 cnt 已按 0..999 饱和显示（999 表示 >=999）
                 case (S_osd_slot)
                     3'd0:    S_osd_ch = 5'd20;                  // D
                     3'd1:    S_osd_ch = hex_glyph(I_det_flags[7:4]);
