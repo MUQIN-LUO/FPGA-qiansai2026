@@ -75,7 +75,7 @@ module tb_circle_text;
         end
         if (cap_en && u_dut.S_rt_box_q &&
             (u_dut.S_rt_celly_q==4'd4) && (u_dut.S_rt_cellx_q==4'd5)) begin
-            si = u_dut.S_rt_slot;
+            si = u_dut.S_rt_slot_d2;
             if (si >= 0 && si < 11) rt_seq[si] = u_dut.S_rt_ch_q;
         end
     end

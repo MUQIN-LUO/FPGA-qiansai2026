@@ -1731,6 +1731,10 @@ awb #(
     assign O_det_cy    = EVT_CIRCLE ? S_trk_cy :
                          ((S_ccl_miny + S_ccl_maxy) >> 1);
     assign O_det_green = EVT_CIRCLE ? S_trk_green : 1'b0;
+    // NOTE: O_det_valid is the green-box display level: a fresh valid
+    // detection, or the tracker's bounded hold of the same target.  It is the
+    // buzzer trigger in design_top_wrapper (the 10-frame static "stable" gate
+    // is deliberately NOT used: a moving ball never satisfies it).
     // HUD layout is unchanged: {ovf,live,chord,rows,asp,size,pass,valid}.
     // The event detector has no chord/rows/asp/size criteria; its four free
     // positions are used for independent diagnostics, and the processed-frame

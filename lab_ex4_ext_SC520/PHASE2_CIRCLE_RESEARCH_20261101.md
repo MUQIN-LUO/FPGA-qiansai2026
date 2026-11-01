@@ -1307,3 +1307,108 @@ L:  ##......    E:  .######.    X:  .##..##.    Y:  .##..##.
   `green_word_zoom_16x.png`）和 `audio_preview/`。旧位流全部保留。
 - **风险**：slices 90.21%，余量约 9.8%；后续再加逻辑必须重新综合/
   布线并复核时序。
+
+## 18. 两只老虎无源蜂鸣器触发（2026-11-01 夜，rev 2o）
+
+参考 `D:\FPGA\two_tigers_buzzer_demo.wav`（mono 16-bit 22050Hz，16.00s，
+120 BPM，标准两只老虎音符表）与 `D:\FPGA\buzzer_example\13_music`
+（C12、单声部可变频方波）。**WAV 不装入 FPGA**；FPGA 用 32 项紧凑音符
+ROM。`C:\Users\29267\Desktop\9_MUX_buzz` 是 4 选 1 单音，不是和弦，
+仅参考 C12/方波驱动，不作为多音方案。
+
+### 18.1 音符 ROM 与频率
+
+- 32 项，每项 `{note[2:0], duration[2:0]}`，时值单位=0.25s 半拍；
+  120 BPM、64 半拍=16.0s：
+  - C5 D5 E5 C5 ×2（各 1 拍）
+  - E5 F5 G5(2 拍) ×2
+  - G5 A5 G5 F5（各半拍）E5 C5（各 1 拍）×2
+  - C5 G4（各 1 拍）C5(2 拍) ×2
+- 方波频率 `f = CLK_HZ/(2*div)`；`div` 由 `CLK_HZ/(2*f_note)`
+  （G4/C5/D5/E5/F5/G5/A5）在综合时算成常量。50MHz 下约
+  G4 63,775 / C5 47,801 / D5 42,590 / E5 37,937 / F5 35,816 /
+  G5 31,888 / A5 28,409；方波 50% 占空，单声部。
+- 每音末尾 20ms 间隙（articulation），总时长仍 16s；不把 WAV 放进
+  FPGA。
+
+### 18.2 触发/保持/重臂语义（rev 2o 修正）
+
+- **rev 2n 的错误**：最初接的是 tracker `out_stable`（10 帧锚点窗口
+  内静止才置位）。运动球即使每帧都被识别，也永远满足不了 16px 锚点，
+  可能整段运动都不触发。
+- **rev 2o 触发源**：画面上绿框的显示有效电平 `isp_top.O_det_valid`
+  （EVT = tracker `out_valid`：首帧有效检测/候选即置位，并在 tracker
+  自身 4 帧有界 hold 期间保持；CCL = `S_ccl_det_valid`）。不再使用
+  `out_stable`。
+- **hold 不假装新检测**：hold 只让 `O_det_valid` 保持高，不产生新的
+  上升沿；播放器的边沿检测不会把 hold 当成一次新检测，也不会
+  重启/叠加。
+- 该电平从 CSI 域进入 50MHz 域时用 **2FF 同步器**，再取上升沿；
+  note/序列/重臂计时全部在稳定 50MHz 域。SDC 的
+  `set_clock_groups -asynchronous` 已把 MIPI_RX_BYTE_CLK 与
+  sys_clk_50m 分开，无需新增 false path；最终 `check_timing` 中没有
+  `u_two_tigers` 跨域路径。仿真实测 CSI 上升沿到 start 约 2 个
+  50MHz 周期。
+- 上升沿 + `armed` + `!playing` 才启动一首；启动后 `armed=0`；
+  播放中忽略任何新上升沿/丢帧/hold，不重启、不叠加。
+- 一首 16s 播完 `playing=0`、输出 0；目标仍在也不自动重播（没有新的
+  上升沿，armed 保持 0）。
+- 目标消失（`O_det_valid=0`，即 hold 到期后）持续 **1s** 后 `armed=1`；
+  之后目标重新出现的上升沿才再次启动。短暂丢检/hold（<1s）不会重臂，
+  避免闪烁反复。
+- 播放中若目标消失 >1s，`armed` 可置 1，但当时上升沿被 playing 忽略；
+  播放结束后若目标已在场，没有新上升沿，仍不自动重播；需再次
+  消失>1s + 重新出现。
+- 复位：`S_rst_n` 清 playing/音符/计数器，`O_buzzer=0`（无随机
+  杂音）；释放后若目标已在场，2FF 产生一次上升沿，按正常触发启动。
+- `O_buzzer` 约束 **C12**（LVCMOS33，8mA）；`pin.adc` 原先无 C12，
+  无冲突；未改 `D:\FPGA\project`。
+
+### 18.3 定向仿真
+
+`tb_two_tigers.v`（CLK_HZ 缩放 500kHz，音符频率/时值仍为真实值；
+16s 全曲 8M 周期）：复位静音；target 异步时钟启动；第一音 C5
+1 拍；输出周期 956 周期（523Hz@500kHz）；20ms 间隙=10,000 周期；
+1/2/0.5 拍时值；32 项序列与 ROM 一致；播放中短暂丢检不重启；
+16s 完成；目标仍在 200ms 不自动重播；消失 1.2s 后重臂并重新启动；
+播放中复位输出低、序列清；释放后目标低保持静音。PASS。
+
+`tb_two_tigers_integration.v`（真实 `isp_ball_track` + `isp_two_tigers`，
+CSI 333.33kHz 与 50MHz 异步双时钟，60fps 处理帧）：运动球每帧 50px、
+永不满足 stable，仍出绿框并只启动一首；播放中运动球短暂丢检（候选
+无 hold，框掉但歌继续）不重启；转为静止确认 stable 后 2 帧丢失，框由
+hold 保持、`out_hold=1`、无新 start；16s 全曲 32 音符/频率/时值/20ms
+间隙；播完目标仍在 200ms 不重播；消失>1s 重臂、重获后新曲从 note0
+开始；播放中复位静音；CDC 延迟 2 周期。PASS。
+
+OSD 回归：`tb_circle_text.v` PASS，且新 `hdmi_mixer` 的 PPM/TXT 与
+rev2m 基线逐字节一致（md5 `ce89b4318972c2ae23e5084d1c08f904` /
+`685e1db194d0ecbb12c922070d516901`），真实像素不变。
+
+### 18.4 独立构建（rev 2o，最终）
+
+- 构建快照：`D:\FPGA\phase2_build_rev2o_two_tigers`（从最终工作树复制，
+  独立于 `D:\FPGA\project`；旧 bit/快照全部保留）。
+- 综合（syn_1，`camera_to_dsi_display_evt.sdc`）：Setup WNS **+162ps**，
+  TNS 0，0 违例；Hold WNS **+114ps**，0 违例。
+- 布局布线+bitgen（phy_1，final）：Setup WNS **+137ps**，TNS 0，0 违例；
+  Hold WNS **+20ps**，0 违例；slices **19,150/21,216 = 90.26%**，
+  ERAM 86/108，DSP 27/40，wire length 5,208,128。
+- `O_buzzer` 在最终 IO 表中确认为 **C12 / LVCMOS33 / 8mA / no pull**。
+- CDC/约束核对：构建明确使用 evt SDC；`check_timing` 与 rev2m 基线
+  诊断一致（仅输出数 +1，即 C12），无新增 no-clock/无约束时钟问题，
+  报告中无 `u_two_tigers` 跨域路径（异步时钟组已覆盖）。
+- 时序修复（真实像素不变）：
+  - 文字 OSD 的 `I_det_cy -> div100 -> div10 -> S_txt_yo_q` 原本是
+    HDMI_PIXEL_CLK 的 -0.365ns 违例；因为 `I_det_*` 在显示域整帧
+    静态，在十进制译码中插入两级寄存器，只延迟帧首更新、不移动字形。
+  - 运行时 OSD 的 `S_x_2d -> div30 -> div3` 是 -1.103ns 违例；改为从
+    **早两拍的 S_x/S_y** 出发做两级流水，q 级看到的坐标仍与
+    `S_x_2d` 完全对齐。旧上下文加的“q 前一级 D”会使右下角时钟整体
+    右移 1 像素，已撤销。
+  - 两种改动都用 `tb_circle_text` 与 rev2m 基线逐字节比对确认
+    PPM/TXT 完全一致。
+- 位流：`deliverable/camera_to_dsi_display_rev2o_two_tigers.bit`
+  （1,789,539 bytes），SHA256
+  `1eae3a4d59a33ff216940016fb537d7f5e5af111aff2e5dcf61e69469e042900`；
+  rev2m 旧 bit 哈希 `8d260360...b00bca3` 未变。**未烧录**。

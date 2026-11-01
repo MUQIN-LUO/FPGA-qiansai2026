@@ -1001,20 +1001,57 @@ module hdmi_mixer #(
     wire [9:0]  S_txt_xv = (S_txt_xabs > 13'd999) ? 10'd999 : S_txt_xabs[9:0];
     wire [9:0]  S_txt_yv = (S_txt_yabs > 13'd999) ? 10'd999 : S_txt_yabs[9:0];
 
-    wire [3:0] S_txt_xh = div100_999(S_txt_xv);
-    wire [9:0] S_txt_xr = S_txt_xv -
+    // ---- pipelined decimal decode -------------------------------------
+    // I_det_* are frame-static here: design_top_wrapper latches the whole
+    // result group at S_hdmi_user, so these registers only delay the text
+    // update by a few clocks.  They never move a glyph: the pixel position is
+    // still compared against S_x_2d/S_y_2d with the same glyph table.
+    // They break the former I_det_cy -> div100 -> div10 -> S_txt_yo_q path
+    // (HDMI_PIXEL_CLK setup, -0.365 ns in the rev-2n gate report) that the
+    // runtime-clock OSD pipeline did not touch.
+    reg [9:0] S_txt_xv_p, S_txt_yv_p;
+    reg       S_txt_xneg_p0, S_txt_yneg_p0;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_txt_xv_p <= 10'd0; S_txt_yv_p <= 10'd0;
+            S_txt_xneg_p0 <= 1'b0; S_txt_yneg_p0 <= 1'b0;
+        end
+        else begin
+            S_txt_xv_p <= S_txt_xv; S_txt_yv_p <= S_txt_yv;
+            S_txt_xneg_p0 <= S_txt_xneg; S_txt_yneg_p0 <= S_txt_yneg;
+        end
+    end
+
+    wire [3:0] S_txt_xh = div100_999(S_txt_xv_p);
+    wire [9:0] S_txt_xr = S_txt_xv_p -
                           (({6'd0,S_txt_xh} << 6) + ({6'd0,S_txt_xh} << 5) +
                            ({6'd0,S_txt_xh} << 2));
-    wire [3:0] S_txt_xt = div10_99(S_txt_xr[6:0]);
-    wire [3:0] S_txt_xo = S_txt_xr[3:0] -
-                          (({1'b0,S_txt_xt} << 3) + ({1'b0,S_txt_xt} << 1));
-
-    wire [3:0] S_txt_yh = div100_999(S_txt_yv);
-    wire [9:0] S_txt_yr = S_txt_yv -
+    wire [3:0] S_txt_yh = div100_999(S_txt_yv_p);
+    wire [9:0] S_txt_yr = S_txt_yv_p -
                           (({6'd0,S_txt_yh} << 6) + ({6'd0,S_txt_yh} << 5) +
                            ({6'd0,S_txt_yh} << 2));
-    wire [3:0] S_txt_yt = div10_99(S_txt_yr[6:0]);
-    wire [3:0] S_txt_yo = S_txt_yr[3:0] -
+
+    reg [3:0] S_txt_xh_p, S_txt_yh_p;
+    reg [9:0] S_txt_xr_p, S_txt_yr_p;
+    reg       S_txt_xneg_p, S_txt_yneg_p;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_txt_xh_p <= 4'd0; S_txt_yh_p <= 4'd0;
+            S_txt_xr_p <= 10'd0; S_txt_yr_p <= 10'd0;
+            S_txt_xneg_p <= 1'b0; S_txt_yneg_p <= 1'b0;
+        end
+        else begin
+            S_txt_xh_p <= S_txt_xh; S_txt_yh_p <= S_txt_yh;
+            S_txt_xr_p <= S_txt_xr; S_txt_yr_p <= S_txt_yr;
+            S_txt_xneg_p <= S_txt_xneg_p0; S_txt_yneg_p <= S_txt_yneg_p0;
+        end
+    end
+
+    wire [3:0] S_txt_xt = div10_99(S_txt_xr_p[6:0]);
+    wire [3:0] S_txt_xo = S_txt_xr_p[3:0] -
+                          (({1'b0,S_txt_xt} << 3) + ({1'b0,S_txt_xt} << 1));
+    wire [3:0] S_txt_yt = div10_99(S_txt_yr_p[6:0]);
+    wire [3:0] S_txt_yo = S_txt_yr_p[3:0] -
                           (({1'b0,S_txt_yt} << 3) + ({1'b0,S_txt_yt} << 1));
 
     // Dynamic width: 18 chars normally, 24 when the optional GREEN label is
@@ -1056,10 +1093,10 @@ module hdmi_mixer #(
             S_txt_on_q    <= I_det_valid;
             S_txt_isgreen_q <= I_det_green;
             S_txt_w_q     <= S_txt_w_act;
-            S_txt_xneg_q <= S_txt_xneg; S_txt_yneg_q <= S_txt_yneg;
-            S_txt_xh_q   <= S_txt_xh;   S_txt_xt_q   <= S_txt_xt;
+            S_txt_xneg_q <= S_txt_xneg_p; S_txt_yneg_q <= S_txt_yneg_p;
+            S_txt_xh_q   <= S_txt_xh_p;   S_txt_xt_q   <= S_txt_xt;
             S_txt_xo_q   <= S_txt_xo;
-            S_txt_yh_q   <= S_txt_yh;   S_txt_yt_q   <= S_txt_yt;
+            S_txt_yh_q   <= S_txt_yh_p;   S_txt_yt_q   <= S_txt_yt;
             S_txt_yo_q   <= S_txt_yo;
             S_txt_x0_q   <= S_txt_x0;   S_txt_y0_q   <= S_txt_y0;
         end
@@ -1247,19 +1284,62 @@ module hdmi_mixer #(
         (({3'd0,S_rt_sec_t} << 3) + ({3'd0,S_rt_sec_t} << 1));
     wire [3:0] S_rt_sec_o = S_rt_sec_r[3:0];
 
-    wire S_rt_in = (S_x_2d >= RT_X0) && (S_x_2d < (RT_X0 + RT_W)) &&
-                   (S_y_2d >= RT_Y0) && (S_y_2d < (RT_Y0 + RT_H));
-    wire [11:0] S_rt_ox = S_x_2d - RT_X0;
-    wire [11:0] S_rt_oy = S_y_2d - RT_Y0;
-    wire [4:0]  S_rt_slot = rt_div30(S_rt_ox);              // 0..10
-    wire [9:0]  S_rt_cellx = rt_div3(S_rt_ox -
-                              (({5'd0,S_rt_slot} << 5) -
-                               ({5'd0,S_rt_slot} << 1)));   // 0..9
-    wire [9:0]  S_rt_celly = rt_div3(S_rt_oy);              // 0..9
+    // ---- runtime OSD coordinate pipeline --------------------------------
+    // S_x/S_y are exactly two pixels ahead of S_x_2d/S_y_2d (the data and
+    // coordinate paths are both two-stage).  Dividing by 30 and then by 3 in
+    // one clock was the HDMI_PIXEL_CLK critical path.  Computing from S_x/S_y
+    // and using two register stages gives each divider a full clock period,
+    // while the q stage still sees exactly the coordinate that S_x_2d/S_y_2d
+    // held one clock earlier: the rendered overlay is pixel-identical to the
+    // original single-stage version (verified against the rev-2m RTL).
+    wire S_rt_in_lead = (S_x >= RT_X0) && (S_x < (RT_X0 + RT_W)) &&
+                        (S_y >= RT_Y0) && (S_y < (RT_Y0 + RT_H));
+    wire [11:0] S_rt_ox_lead = S_x - RT_X0;
+    wire [11:0] S_rt_oy_lead = S_y - RT_Y0;
+    wire [4:0]  S_rt_slot_lead = rt_div30(S_rt_ox_lead);    // 0..10
+    wire [11:0] S_rt_rem_lead = S_rt_ox_lead -
+                              (({5'd0,S_rt_slot_lead} << 5) -
+                               ({5'd0,S_rt_slot_lead} << 1));
+    wire [9:0]  S_rt_celly_lead = rt_div3(S_rt_oy_lead);    // 0..9
+
+    reg        S_rt_box_d1;
+    reg [4:0]  S_rt_slot_d1;
+    reg [11:0] S_rt_rem_d1;
+    reg [9:0]  S_rt_celly_d1;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_rt_box_d1 <= 1'b0; S_rt_slot_d1 <= 5'd0;
+            S_rt_rem_d1 <= 12'd0; S_rt_celly_d1 <= 10'd0;
+        end
+        else begin
+            S_rt_box_d1   <= S_rt_in_lead;
+            S_rt_slot_d1  <= S_rt_slot_lead;
+            S_rt_rem_d1   <= S_rt_rem_lead;
+            S_rt_celly_d1 <= S_rt_celly_lead;
+        end
+    end
+
+    wire [9:0] S_rt_cellx_lead2 = rt_div3(S_rt_rem_d1);     // 0..9
+
+    reg        S_rt_box_d2;
+    reg [4:0]  S_rt_slot_d2;
+    reg [9:0]  S_rt_cellx_d2, S_rt_celly_d2;
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            S_rt_box_d2 <= 1'b0; S_rt_slot_d2 <= 5'd0;
+            S_rt_cellx_d2 <= 10'd0; S_rt_celly_d2 <= 10'd0;
+        end
+        else begin
+            S_rt_box_d2   <= S_rt_box_d1;
+            S_rt_slot_d2  <= S_rt_slot_d1;
+            S_rt_cellx_d2 <= S_rt_cellx_lead2;
+            S_rt_celly_d2 <= S_rt_celly_d1;
+        end
+    end
 
     reg [4:0] S_rt_ch;
     always @(*) begin
-        case (S_rt_slot)
+        case (S_rt_slot_d2)
             5'd0:  S_rt_ch = 5'd4 + {1'b0,S_rt_day_t};
             5'd1:  S_rt_ch = 5'd4 + {1'b0,S_rt_day_o};
             5'd2:  S_rt_ch = 5'd3;                          // :
@@ -1284,10 +1364,10 @@ module hdmi_mixer #(
             S_rt_cellx_q <= 4'd0; S_rt_celly_q <= 4'd0;
         end
         else begin
-            S_rt_box_q   <= S_rt_in;
+            S_rt_box_q   <= S_rt_box_d2;
             S_rt_ch_q    <= S_rt_ch;
-            S_rt_cellx_q <= S_rt_cellx[3:0];
-            S_rt_celly_q <= S_rt_celly[3:0];
+            S_rt_cellx_q <= S_rt_cellx_d2[3:0];
+            S_rt_celly_q <= S_rt_celly_d2[3:0];
         end
     end
 

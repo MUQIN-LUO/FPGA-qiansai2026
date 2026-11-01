@@ -51,6 +51,7 @@ module design_top_wrapper (
 
     output wire       O_screen_pwm,
     output wire       O_led1,          // 1 Hz 心跳灯，LED1，高电平点亮
+    output wire       O_buzzer,        // 无源蜂鸣器单声部方波，C12
 
     output wire       O_tmds_ch0_p,
     output wire       O_tmds_ch1_p,
@@ -1664,6 +1665,22 @@ isp_top u_isp_top (
     );
 
     // AE 状态在显示帧边界锁存（值来自 CSI 域中继，见 S_ae_csi）
+
+    // ---- 两只老虎单声部无源蜂鸣器（50 MHz 域；绿框电平异步 2FF CDC）----
+    // 触发源是画面上绿框的电平 O_det_valid（EVT: tracker out_valid，含有限
+    // hold；CCL: S_ccl_det_valid）。不用 10 帧静止的 stable 门限：运动球在
+    // 第一帧有效检测就出框。hold 期间电平只是保持高，没有新的上升沿，因此
+    // 不会被当成一次新检测；1 s 消失重臂和播放中不重启由播放器负责。
+    isp_two_tigers #(
+        .CLK_HZ   (50_000_000),
+        .REARM_MS (1000),
+        .GAP_MS   (20)
+    ) u_two_tigers (
+        .clk            (I_sys_clk),
+        .rst_n          (S_rst_n),
+        .target_present (S_det_valid),
+        .buzzer         (O_buzzer)
+    );
 
     // ---- 运行时长 DD:HH:MM:SS：50 MHz 固定分频 + 整组原子 CDC ----
     wire [7:0] S_rt_day, S_rt_hour, S_rt_min, S_rt_sec;
