@@ -228,3 +228,24 @@ is always sampled while stable; `O_evt` is not part of the CDC path.
   or refreshed at least every other frame.  If the clock/video timing is ever
   changed such that processing can span a full frame, this argument (and the
   need for a hard skip watchdog) must be re-checked.
+
+## rev 2h — green miss diagnosis + safe changes
+
+- Chain measurement: red/blue (Y contrast 60) detect; green on 140 grey
+  (contrast 20) and dim (30) miss.  For green the events are on-contour with
+  good directions and cov=16/maxrun=0, but `peak_v=29` vs expected 94 ->
+  fill=0.31, so the only failing gate is fill>=0.5.  A half arc has fill 0.37,
+  so lowering fill would admit the arc: the fix must be more events (front-end
+  SNR), not a threshold.
+- Rejected with evidence: EV_TH 384/320 (sigma=8 noise 1721/4853 -> overflow),
+  a direction-coherence gate (noise unchanged), and a 3-row 1-2-1 prefilter
+  (after fixing an inverted gy sign it still left green at fill 0.31 and the
+  RTL sigma=8 count at 1721) — all reverted.
+- Shipped: EVMAX 1024 -> 1536 (overflow headroom; ~1.37M cycles estimated at
+  1536 events < 1.725M frame), HUD flags[7] now exposes proc_ovf/drop.
+  EDGE_TH=48 / EV_TH=512 / POP / AWB / AE unchanged.
+- tb_handoff2 (1600-event overflow), tb_multiframe_e2e, event and single-frame
+  matrices, original regressions: PASS.
+- Build: syn WNS +0.246 ns; P&R WNS +0.164 ns, hold +0.020 ns, 0 violations,
+  ERAM 86/108, DSP 27/40, slices 17,803/21,216.  New independent bit
+  `camera_to_dsi_display_phase2_diag.bit` SHA256 `c1570200...e522a` (not flashed).

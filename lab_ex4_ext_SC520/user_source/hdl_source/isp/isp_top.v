@@ -1663,9 +1663,12 @@ awb #(
     //   [6] live = event count != 0
     //   [5:2]    = 0 (chord/rows/asp/size are CCL-specific)
     //   [1] pass = best_ok, [0] valid = O_valid
+    // HUD layout {ovf,live,chord,rows,asp,size,pass,valid}: expose overflow and
+    // dropped frames in [7] so a long miss caused by EVMAX overflow is visible
+    // on the board (it used to be dropped silently).
     assign O_det_flags = EVT_CIRCLE ?
-        {(S_ev_flags[3] | S_ev_flags[2]), (S_ev_cnt != 12'd0), 4'b0000,
-         S_ev_flags[0], S_ev_ok_v} : S_ccl_flags;
+        {(S_ev_flags[3] | S_ev_flags[2] | S_ev_flags[1]), (S_ev_cnt != 12'd0),
+         4'b0000, S_ev_flags[0], S_ev_ok_v} : S_ccl_flags;
     assign O_det_cnt   = EVT_CIRCLE ? S_ev_cnt[9:0] : S_ccl_cnt;
 
     // 圆形诊断（板测 HUD）：

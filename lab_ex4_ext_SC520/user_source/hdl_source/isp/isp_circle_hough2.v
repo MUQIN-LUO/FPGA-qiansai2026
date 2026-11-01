@@ -58,7 +58,7 @@ endmodule
 module isp_circle_hough2 #(
     parameter integer IMG_W  = 1280,
     parameter integer IMG_H  = 720,
-    parameter integer EVMAX  = 1024,
+    parameter integer EVMAX  = 1536,
     parameter integer ACC_W  = 320,
     parameter integer ACC_H  = 180,
     parameter integer R_MIN  = 26,
@@ -415,9 +415,9 @@ module isp_circle_hough2 #(
     isp_dpram #(.DW(27), .AW(8), .DEPTH(RB)) u_hmem (
         .clk(clk), .we(h_we), .wa(h_wa), .wd(h_wd),
         .ra(h_ra), .rd(h_rd));
-    isp_dpram #(.DW(48), .AW(10), .DEPTH(EVMAX)) u_evram (
-        .clk(clk), .we(ev_we), .wa(ev_wa[9:0]), .wd(ev_wd),
-        .ra(ev_ra[9:0]), .rd(ev_rd));
+    isp_dpram #(.DW(48), .AW(11), .DEPTH(EVMAX)) u_evram (
+        .clk(clk), .we(ev_we), .wa(ev_wa[10:0]), .wd(ev_wd),
+        .ra(ev_ra[10:0]), .rd(ev_rd));
 
     // =================== divider =========================================
     always @(posedge clk or negedge rst_n) begin

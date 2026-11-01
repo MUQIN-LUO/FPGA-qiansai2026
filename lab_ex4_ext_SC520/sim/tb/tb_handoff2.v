@@ -158,7 +158,7 @@ module tb_handoff2;
         // ---------- overflow frame ages the hold like empty ----------
         pulse_start; send_events(nA, 0); pulse_end; wait_evt(3000000);
         check(O_valid === 1'b1, "valid again");
-        pulse_start; send_events((nX > 1200) ? 1200 : nX, 2); pulse_end; wait_evt(200000);
+        pulse_start; send_events((nX > 1600) ? 1600 : nX, 2); pulse_end; wait_evt(200000);
         check(O_valid === 1'b1, "overflow1: held");
         check(u_dut.proc_ovf === 1'b1, "overflow: proc_ovf latched");
         pulse_start; pulse_end; wait_evt(100000);
