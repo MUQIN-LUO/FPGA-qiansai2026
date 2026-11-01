@@ -65,6 +65,7 @@ module isp_circle_hough2 #(
     parameter integer R_MAX  = 160,
     parameter integer TOPK   = 4,
     parameter integer ACCW   = 12,
+    parameter integer HOLD   = 2,
     parameter integer ITERS  = 16,
     parameter integer SCORE_MARGIN = 0
 )(
@@ -148,6 +149,9 @@ module isp_circle_hough2 #(
     reg [12:0] proc_count;
     reg        proc_ovf, proc_drop, proc_start, proc_done;
     reg        drop_seen;
+    reg [1:0]  hold_cnt;
+    reg [11:0] h_cx, h_cy, h_r, h_minx, h_maxx, h_miny, h_maxy;
+    reg [15:0] h_score;
 
     // ---------------- coarse accumulator ---------------------------------
     wire [ACCW-1:0] acc_rd;
@@ -471,7 +475,7 @@ module isp_circle_hough2 #(
             if (frame_end && proc_busy) drop_seen <= 1'b1;
             else if (proc_done)         drop_seen <= 1'b0;
             if (proc_done) proc_busy <= 1'b0;
-            else if (frame_end && !proc_busy) begin
+            else if (frame_end && !proc_busy && !cap_drop) begin
                 proc_count  <= wr_cnt;
                 proc_ovf    <= cap_ovf;
                 proc_drop   <= cap_drop;
@@ -504,6 +508,8 @@ module isp_circle_hough2 #(
             dv_start<=0; dv_num<=0; dv_den<=0; qx<=0; qy<=0;
             sx_sign<=0; sy_sign<=0; step_x<=0; step_y<=0;
             best_score<=0; best_r<=0; best_cx<=0; best_cy<=0; best_ok<=0;
+            hold_cnt<=0; h_cx<=0; h_cy<=0; h_r<=0; h_minx<=0; h_maxx<=0;
+            h_miny<=0; h_maxy<=0; h_score<=0;
             h_ra<=0; h_wa<=0; h_wd<=0; h_we<=0;
             for (jj = 0; jj < TOPK; jj = jj + 1) begin
                 top_cnt[jj]<=0; top_x[jj]<=0; top_y[jj]<=0;
@@ -522,6 +528,11 @@ module isp_circle_hough2 #(
             case (st)
             S_IDLE: begin
                 if (proc_start) begin
+                    // clear the previous frame's selection BEFORE the
+                    // short-circuit path: otherwise an empty/overflow frame
+                    // would reuse stale best_ok/best_* and refresh the hold
+                    best_ok <= 1'b0; best_r <= 12'd0; best_cx <= 12'd0;
+                    best_cy <= 12'd0; best_score <= 16'd0;
                     if (proc_drop || proc_ovf || (proc_count == 0)) st <= S_DONE;
                     else begin a <= 0; st <= S_CLR; end
                 end
@@ -938,14 +949,43 @@ module isp_circle_hough2 #(
                 else cand <= cand + 1'b1;
             end
             S_DONE: begin
-                O_valid <= best_ok && !proc_ovf && !proc_drop && (proc_count != 0);
-                O_cx <= best_cx; O_cy <= best_cy; O_r <= best_r;
-                O_minx <= (best_ok && (best_cx > best_r)) ? (best_cx - best_r) : 0;
-                O_maxx <= (best_ok) ? (((best_cx + best_r) < IMG_W) ? (best_cx + best_r) : IMG_W-1) : 0;
-                O_miny <= (best_ok && (best_cy > best_r)) ? (best_cy - best_r) : 0;
-                O_maxy <= (best_ok) ? (((best_cy + best_r) < IMG_H) ? (best_cy + best_r) : IMG_H-1) : 0;
-                O_flags <= {4'd0, drop_seen, proc_drop, proc_ovf, best_ok};
-                O_score <= best_score;
+                // Bounded hold: a processed frame without a valid circle keeps
+                // the previous box for HOLD processed frames, then clears.
+                // Skipped (cap_drop) frames never reach S_DONE, so they do not
+                // age the hold and never write an invalid result.
+                if (best_ok) begin
+                    O_valid <= 1'b1;
+                    O_cx <= best_cx; O_cy <= best_cy; O_r <= best_r;
+                    O_minx <= (best_cx > best_r) ? (best_cx - best_r) : 0;
+                    O_maxx <= (((best_cx + best_r) < IMG_W) ? (best_cx + best_r) : IMG_W-1);
+                    O_miny <= (best_cy > best_r) ? (best_cy - best_r) : 0;
+                    O_maxy <= (((best_cy + best_r) < IMG_H) ? (best_cy + best_r) : IMG_H-1);
+                    O_score <= best_score;
+                    hold_cnt <= HOLD[1:0];
+                    h_cx <= best_cx; h_cy <= best_cy; h_r <= best_r;
+                    h_minx <= (best_cx > best_r) ? (best_cx - best_r) : 0;
+                    h_maxx <= (((best_cx + best_r) < IMG_W) ? (best_cx + best_r) : IMG_W-1);
+                    h_miny <= (best_cy > best_r) ? (best_cy - best_r) : 0;
+                    h_maxy <= (((best_cy + best_r) < IMG_H) ? (best_cy + best_r) : IMG_H-1);
+                    h_score <= best_score;
+                    O_flags <= {4'd0, drop_seen, proc_drop, proc_ovf, 1'b1};
+                end
+                else if (hold_cnt != 2'd0) begin
+                    hold_cnt <= hold_cnt - 1'b1;
+                    O_valid <= 1'b1;              // held, not a fresh pass
+                    O_cx <= h_cx; O_cy <= h_cy; O_r <= h_r;
+                    O_minx <= h_minx; O_maxx <= h_maxx;
+                    O_miny <= h_miny; O_maxy <= h_maxy;
+                    O_score <= h_score;
+                    O_flags <= {4'd0, drop_seen, proc_drop, proc_ovf, 1'b0};
+                end
+                else begin
+                    O_valid <= 1'b0;
+                    O_cx <= 0; O_cy <= 0; O_r <= 0;
+                    O_minx <= 0; O_maxx <= 0; O_miny <= 0; O_maxy <= 0;
+                    O_score <= 0;
+                    O_flags <= {4'd0, drop_seen, proc_drop, proc_ovf, 1'b0};
+                end
                 O_evt <= 1'b1;
                 proc_done <= 1'b1;
                 st <= S_IDLE;

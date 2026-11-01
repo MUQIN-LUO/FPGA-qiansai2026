@@ -9,6 +9,7 @@
 //           GAPW  (occluding vertical slab on the right; 0 = none)
 //           NOISE (uniform +/- amplitude added to every pixel; 0 = none)
 module tb_frontend_e2e;
+    parameter integer EV_TH_TB = 512;
     localparam integer W = 1280, H = 720;
     localparam integer LINE_CYCLES = 2300;
     localparam integer ACTIVE = W/4;
@@ -27,7 +28,7 @@ module tb_frontend_e2e;
     wire signed [9:0] ev_ux, ev_uy;
     wire [3:0]  ev_sector;
 
-    isp_grad_event96 u_fe (
+    isp_grad_event96 #(.EV_TH(EV_TH_TB)) u_fe (
         .clk(clk), .rst_n(rst_n),
         .I_y4(tdata), .I_valid(tvalid), .I_tuser(tuser), .I_tlast(tlast),
         .I_x(ix), .I_y(iy),
@@ -55,6 +56,7 @@ module tb_frontend_e2e;
 
     integer CX, CY, RR, INS, OUT, EXP_V;
     integer SCENE, RA, RB, HW, HH, CX2, CY2, R2, GAPW, NOISE;
+    integer C_R, C_G, C_B, BK_R, BK_G, BK_B, SHADOW;
     integer seed;
     integer errors = 0, done = 0, tmo, ecnt = 0;
     integer ev_total = 0, ev_off = 0, ev_baddir = 0;
@@ -103,6 +105,7 @@ module tb_frontend_e2e;
               3: inside = (d1 <= RR*RR) || (d2 <= R2*R2);
               5: inside = (d1 <= RR*RR) || ((px-CX2 <= HW) && (px-CX2 >= -HW) && (py-CY2 <= HH) && (py-CY2 >= -HH));
               6: inside = (d1 <= RR*RR) || (((((px-CX2)*(px-CX2))/(RA*RA)) + (((py-CY2)*(py-CY2))/(RB*RB))) <= 1);
+              7: inside = (d1 <= RR*RR);
               default: inside = 0;
             endcase
             if (GAPW > 0) begin
@@ -111,11 +114,25 @@ module tb_frontend_e2e;
         end
     endfunction
 
+    function [7:0] y_of;
+        input [7:0] r, g, b;
+        begin y_of = (r >> 2) + (g >> 1) + (b >> 2); end
+    endfunction
+
     function [7:0] pixel;
         input integer px, py;
         integer v, nz;
+        reg [7:0] rr, gg, bb;
         begin
-            v = inside(px, py) ? INS : OUT;
+            if (SCENE == 7) begin
+                if (inside(px, py)) begin rr = C_R; gg = C_G; bb = C_B; end
+                else                begin rr = BK_R; gg = BK_G; bb = BK_B; end
+                if (SHADOW != 0 && inside(px, py) && (px < CX)) begin
+                    rr = rr >> 1; gg = gg >> 1; bb = bb >> 1;
+                end
+                v = y_of(rr, gg, bb);
+            end
+            else v = inside(px, py) ? INS : OUT;
             if (NOISE > 0) begin
                 nz = $random(seed) % (2*NOISE + 1);
                 v = v + (nz - NOISE);
@@ -190,6 +207,13 @@ module tb_frontend_e2e;
         if (!$value$plusargs("R2=%d", R2)) R2 = 100;
         if (!$value$plusargs("GAPW=%d", GAPW)) GAPW = 0;
         if (!$value$plusargs("NOISE=%d", NOISE)) NOISE = 0;
+        if (!$value$plusargs("C_R=%d", C_R)) C_R = 200;
+        if (!$value$plusargs("C_G=%d", C_G)) C_G = 40;
+        if (!$value$plusargs("C_B=%d", C_B)) C_B = 40;
+        if (!$value$plusargs("BK_R=%d", BK_R)) BK_R = 140;
+        if (!$value$plusargs("BK_G=%d", BK_G)) BK_G = 140;
+        if (!$value$plusargs("BK_B=%d", BK_B)) BK_B = 140;
+        if (!$value$plusargs("SHADOW=%d", SHADOW)) SHADOW = 0;
         $display("PARAMS SCENE=%0d CX=%0d CY=%0d R=%0d HW=%0d HH=%0d GAPW=%0d NOISE=%0d EVALID=%0d",
                  SCENE, CX, CY, RR, HW, HH, GAPW, NOISE, EXP_V);
         seed = 32'h12345;

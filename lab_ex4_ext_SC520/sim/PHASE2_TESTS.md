@@ -152,3 +152,79 @@ reject; 300-deg arc, circle+square, +-8 noise pass; noise-only rejected;
 two circles -> smaller r40; small/rounder/big ellipse vs circle -> circle.
 Log: `logs/e2e_matrix_rev2f.log`. Event level 17/18 (ideal dense 180-deg arc
 still passes; the pixel-level arc rejects).
+
+## rev 2g — board-feedback stability fixes
+
+### Frame handoff defect (reproduced, then fixed)
+
+With one event bank, every other captured frame starts while the previous
+frame is being processed.  The old capture path latched `cap_drop=1` but still
+started a "processing" for that dropped frame if `proc_done` arrived before
+its `frame_end`; `S_DONE` then wrote an invalid result, clearing the box for
+about two display frames -> visible box flicker.
+
+Fix:
+- capture never starts a frame that was dropped (`frame_end && !proc_busy &&
+  !cap_drop`);
+- `S_IDLE` clears the previous frame's `best_*` before the empty/overflow
+  short-circuit (an empty frame used to reuse stale `best_ok=1` and refresh
+  the hold forever);
+- bounded hold: a processed frame without a valid circle keeps the previous
+  box for `HOLD=2` processed frames, then clears.  Skipped frames do not
+  reach `S_DONE`, so they neither age the hold nor write an invalid result.
+
+`tb_handoff2.v` reproduces the defect on 5afe931 (dropped frame emits an
+invalid O_evt; no hold) and passes after the fix: busy-time frame start,
+processing finishing inside the frame, dropped frame end, recovery, empty
+frames (hold 2 -> 1 -> 0 -> clear), overflow frame aging the hold, reset.
+
+`tb_multiframe_e2e.v` drives five real-timing 1280x720 frames (f1 circle,
+f2 arrives while f1 is processing, f3..f5 background).  It checks that f2
+produces no O_evt, that O_valid never drops before the clear (glitch samples
+= 0), that f3/f4 hold the r60 box, and that f5 clears it.  PASS.
+
+### Colour / low-contrast investigation (no threshold change)
+
+Exact shared luma is `Y = (R>>2)+(G>>1)+(B>>2)` (`isp_rgb2y96`).
+
+| RGB scene (r60) | Y contrast | RTL result |
+|---|---|---|
+| red (200,40,40) on 140 grey | 60 | detected r=60 |
+| blue (40,40,200) on 140 grey | 60 | detected |
+| green (40,200,40) on 140 grey | 20 | missed (26 events) |
+| green on dark 60 grey | 60 | detected |
+| dim (80,100,80) on 120 grey | 30 | missed (56 events) |
+
+Lowering the block energy gate was measured and rejected: EV_TH=384 floods
+sigma=8 noise (1721 events -> EVMAX overflow, circle lost) and EV_TH=320
+floods worse (4853).  A block direction-coherence gate was prototyped in RTL
+(`|sum g| >= 0.5 * sum|g|`); it did not reduce the sigma=8 flood (1717
+events) and green20 still missed, so it was reverted.  `EDGE_TH=48` and
+`EV_TH=512` are unchanged.  The likely future fix is a 5x5/Scharr prefilter
+with real-frame validation; this is recorded, not claimed.
+
+### Display snapshot / CDC
+
+The wrapper stages a whole result group at the ISP frame event and transfers
+it with a toggle/ack handshake.  The event detector updates `O_det_*` only at
+`S_DONE`, several ms after `frame_end`, while the staging samples at
+`frame_end` (+4 cycles) and the next capture is one frame later, so the group
+is always sampled while stable; `O_evt` is not part of the CDC path.
+
+### Bounded-timeout semantics (overflow / skipped frames)
+
+- **Processed frame with no valid circle** (empty, or `cap_ovf` due to the
+  EVMAX event cap): the core walks the short-circuit `S_IDLE -> S_DONE`, which
+  ages the hold by one.  After `HOLD=2` such processed frames the box clears
+  (`HOLD+1` processed frames total; with the 2-frame capture cadence that is
+  about 5-6 display frames, ~80-100 ms).
+- **Skipped frame** (`cap_drop`: frame started while the previous one was
+  still being processed): not processed at all - no `O_evt`, no result write,
+  and the hold is not aged.  The previous box stays.
+- **Sustained skipping cannot persist** in this timing: measured worst-case
+  processing is 897k cycles (8.7 ms at 103.5 MHz) for 1002 events
+  (EVMAX=1024), while a video frame is 1.725M cycles (16.7 ms).  A skipped
+  frame is therefore always followed by a captured one, so the hold is aged
+  or refreshed at least every other frame.  If the clock/video timing is ever
+  changed such that processing can span a full frame, this argument (and the
+  need for a hard skip watchdog) must be re-checked.
