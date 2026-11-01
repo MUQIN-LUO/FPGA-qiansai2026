@@ -1308,7 +1308,7 @@ L:  ##......    E:  .######.    X:  .##..##.    Y:  .##..##.
 - **风险**：slices 90.21%，余量约 9.8%；后续再加逻辑必须重新综合/
   布线并复核时序。
 
-## 18. 两只老虎无源蜂鸣器触发（2026-11-01 夜，rev 2o）
+## 18. 两只老虎无源蜂鸣器触发（2026-11-01 夜，rev 2p 最终）
 
 参考 `D:\FPGA\two_tigers_buzzer_demo.wav`（mono 16-bit 22050Hz，16.00s，
 120 BPM，标准两只老虎音符表）与 `D:\FPGA\buzzer_example\13_music`
@@ -1331,69 +1331,71 @@ ROM。`C:\Users\29267\Desktop\9_MUX_buzz` 是 4 选 1 单音，不是和弦，
 - 每音末尾 20ms 间隙（articulation），总时长仍 16s；不把 WAV 放进
   FPGA。
 
-### 18.2 触发/保持/重臂语义（rev 2o 修正）
+### 18.2 触发/看门狗语义（rev 2p 最终）
 
-- **rev 2n 的错误**：最初接的是 tracker `out_stable`（10 帧锚点窗口
-  内静止才置位）。运动球即使每帧都被识别，也永远满足不了 16px 锚点，
-  可能整段运动都不触发。
-- **rev 2o 触发源**：画面上绿框的显示有效电平 `isp_top.O_det_valid`
-  （EVT = tracker `out_valid`：首帧有效检测/候选即置位，并在 tracker
-  自身 4 帧有界 hold 期间保持；CCL = `S_ccl_det_valid`）。不再使用
-  `out_stable`。
-- **hold 不假装新检测**：hold 只让 `O_det_valid` 保持高，不产生新的
-  上升沿；播放器的边沿检测不会把 hold 当成一次新检测，也不会
-  重启/叠加。
-- 该电平从 CSI 域进入 50MHz 域时用 **2FF 同步器**，再取上升沿；
-  note/序列/重臂计时全部在稳定 50MHz 域。SDC 的
-  `set_clock_groups -asynchronous` 已把 MIPI_RX_BYTE_CLK 与
+- **历史**：rev2n 接 tracker `out_stable`（10 帧 16px 锚点内静止），
+  运动球可能永不触发；rev2o 改接绿框 `O_det_valid`。rev2p 进一步改为
+  只认 **真实检测通过事件**，不再用绿框电平做触发或计时。
+- **新鲜检测事件**：CSI 域 `out_fresh_tgl` 每个核心 fresh pass 翻转一次
+  （EVT = tracker `det_pass`，即 `S_ev_ok_v && flags[0]`；CCL = 
+  `det_result` 的 `O_pass`）。跳过的处理帧、绿框 4 帧 hold、没有 pass
+  的帧都不会翻转。
+- **CDC**：toggle 进入 50MHz 后 **2FF 同步 + 边沿检测**，得到一个周期
+  事件。相机帧间隔 ≥16ms，远大于 2FF 延迟，不会丢事件；复位释放后
+  3 个 50MHz 周期消隐，避免把 toggle 的既有电平误当成一次检测。
+  SDC 的 `set_clock_groups -asynchronous` 已把 MIPI_RX_BYTE_CLK 与
   sys_clk_50m 分开，无需新增 false path；最终 `check_timing` 中没有
-  `u_two_tigers` 跨域路径。仿真实测 CSI 上升沿到 start 约 2 个
-  50MHz 周期。
-- 上升沿 + `armed` + `!playing` 才启动一首；启动后 `armed=0`；
-  播放中忽略任何新上升沿/丢帧/hold，不重启、不叠加。
-- 一首 16s 播完 `playing=0`、输出 0；目标仍在也不自动重播（没有新的
-  上升沿，armed 保持 0）。
-- 目标消失（`O_det_valid=0`，即 hold 到期后）持续 **1s** 后 `armed=1`；
-  之后目标重新出现的上升沿才再次启动。短暂丢检/hold（<1s）不会重臂，
-  避免闪烁反复。
-- 播放中若目标消失 >1s，`armed` 可置 1，但当时上升沿被 playing 忽略；
-  播放结束后若目标已在场，没有新上升沿，仍不自动重播；需再次
-  消失>1s + 重新出现。
-- 复位：`S_rst_n` 清 playing/音符/计数器，`O_buzzer=0`（无随机
-  杂音）；释放后若目标已在场，2FF 产生一次上升沿，按正常触发启动。
+  `u_two_tigers` 跨域路径。
+- **播放规则**：
+  - 真实检测 + armed + !playing → **立即从第 1 个音（C5）开始**，
+    armed=0。
+  - 播放中再来真实检测：只清零 1s 看门狗，**不重启、不叠加**。
+  - **连续 1s 没有真实检测**：立即停止、`O_buzzer=0`、armed=1。
+    1s 从**最后一次真实 pass** 起算；tracker 的 4 帧 hold 不会把计时
+    起点推后（不是绿框熄灭后再计 1s）。
+  - 短暂漏检 <1s：原曲继续；重新检测不重启。
+  - 16s 播完：playing=0；目标持续被检测时不循环（真实检测不断清零
+    看门狗，armed 保持 0）。
+  - 播完/停止后连续 1s 无真实检测 → armed=1；之后的下一次真实检测
+    从第 1 个音重播。
+  - 复位：playing/音符/计数器清、`O_buzzer=0`、armed=1；释放后若
+    toggle 已有电平，消隐期抑制误触发。
 - `O_buzzer` 约束 **C12**（LVCMOS33，8mA）；`pin.adc` 原先无 C12，
   无冲突；未改 `D:\FPGA\project`。
 
-### 18.3 定向仿真
+### 18.3 定向仿真（rev 2p）
 
 `tb_two_tigers.v`（CLK_HZ 缩放 500kHz，音符频率/时值仍为真实值；
-16s 全曲 8M 周期）：复位静音；target 异步时钟启动；第一音 C5
-1 拍；输出周期 956 周期（523Hz@500kHz）；20ms 间隙=10,000 周期；
-1/2/0.5 拍时值；32 项序列与 ROM 一致；播放中短暂丢检不重启；
-16s 完成；目标仍在 200ms 不自动重播；消失 1.2s 后重臂并重新启动；
-播放中复位输出低、序列清；释放后目标低保持静音。PASS。
+16s 全曲 8M 周期；det_tgl 由异步 333.3kHz CSI 时钟驱动）：
+复位静音/看门狗清零；1.2s 无真实检测不启动；首次真实检测从 note0
+立即启动；第一音 C5、956 周期（523Hz@500kHz）、20ms 间隙；
+连续检测不重启；短暂丢检<1s 继续；999ms 返回不超时；67ms hold-like
+间隙不清零计时；1s 超时实测 **499,949 周期**（从最后一次真实 pass，
+非 hold 到期）后停止/静音/重臂；再次检测从 note0；16s 全曲 32 音符、
+序列/1/2/0.5 拍时值正确；播完持续检测 200ms 不重播；1s 无检测后重臂、
+再次检测从 note0 重播；播放中复位静音。PASS。
 
 `tb_two_tigers_integration.v`（真实 `isp_ball_track` + `isp_two_tigers`，
 CSI 333.33kHz 与 50MHz 异步双时钟，60fps 处理帧）：运动球每帧 50px、
-永不满足 stable，仍出绿框并只启动一首；播放中运动球短暂丢检（候选
-无 hold，框掉但歌继续）不重启；转为静止确认 stable 后 2 帧丢失，框由
-hold 保持、`out_hold=1`、无新 start；16s 全曲 32 音符/频率/时值/20ms
-间隙；播完目标仍在 200ms 不重播；消失>1s 重臂、重获后新曲从 note0
-开始；播放中复位静音；CDC 延迟 2 周期。PASS。
+stable 从未置位，仍只启动一首；运动候选短暂丢检继续；静止确认 stable
+后 2 帧丢失，框由 4 帧 hold 保持、`out_hold=1`、无新 start；hold 到期
+（100ms 后框已消失）但歌仍继续；1s 超时实测 **499,675 周期**从最后
+真实 pass 起算（若从 hold 到期算会是约 533,000），随后停止/静音/重臂；
+再检测从 note0；播放中复位静音。PASS。
 
 OSD 回归：`tb_circle_text.v` PASS，且新 `hdmi_mixer` 的 PPM/TXT 与
 rev2m 基线逐字节一致（md5 `ce89b4318972c2ae23e5084d1c08f904` /
 `685e1db194d0ecbb12c922070d516901`），真实像素不变。
 
-### 18.4 独立构建（rev 2o，最终）
+### 18.4 独立构建（rev 2p，最终）
 
-- 构建快照：`D:\FPGA\phase2_build_rev2o_two_tigers`（从最终工作树复制，
-  独立于 `D:\FPGA\project`；旧 bit/快照全部保留）。
-- 综合（syn_1，`camera_to_dsi_display_evt.sdc`）：Setup WNS **+162ps**，
+- 构建快照：`D:\FPGA\phase2_build_rev2p_timeout`（从最终工作树复制，
+  独立于 `D:\FPGA\project`；rev2m/rev2o 旧 bit 与快照全部保留）。
+- 综合（syn_1，`camera_to_dsi_display_evt.sdc`）：Setup WNS **+134ps**，
   TNS 0，0 违例；Hold WNS **+114ps**，0 违例。
-- 布局布线+bitgen（phy_1，final）：Setup WNS **+137ps**，TNS 0，0 违例；
-  Hold WNS **+20ps**，0 违例；slices **19,150/21,216 = 90.26%**，
-  ERAM 86/108，DSP 27/40，wire length 5,208,128。
+- 布局布线+bitgen（phy_1，final）：Setup WNS **+144ps**，TNS 0，0 违例；
+  Hold WNS **+20ps**，0 违例；slices **17,268/21,216 = 81.39%**，
+  ERAM 86/108，DSP 27/40，wire length 4,940,832。
 - `O_buzzer` 在最终 IO 表中确认为 **C12 / LVCMOS33 / 8mA / no pull**。
 - CDC/约束核对：构建明确使用 evt SDC；`check_timing` 与 rev2m 基线
   诊断一致（仅输出数 +1，即 C12），无新增 no-clock/无约束时钟问题，
@@ -1408,7 +1410,8 @@ rev2m 基线逐字节一致（md5 `ce89b4318972c2ae23e5084d1c08f904` /
     右移 1 像素，已撤销。
   - 两种改动都用 `tb_circle_text` 与 rev2m 基线逐字节比对确认
     PPM/TXT 完全一致。
-- 位流：`deliverable/camera_to_dsi_display_rev2o_two_tigers.bit`
+- 位流：`deliverable/camera_to_dsi_display_rev2p_two_tigers_timeout.bit`
   （1,789,539 bytes），SHA256
-  `1eae3a4d59a33ff216940016fb537d7f5e5af111aff2e5dcf61e69469e042900`；
-  rev2m 旧 bit 哈希 `8d260360...b00bca3` 未变。**未烧录**。
+  `56bddade58945fee33457038c910d807a30a31d7322f0f8f047992425cc3fb8e`；
+  rev2m 旧 bit `8d260360...b00bca3` 与 rev2o 旧 bit
+  `1eae3a4d...e042900` 均未变。**未烧录**。

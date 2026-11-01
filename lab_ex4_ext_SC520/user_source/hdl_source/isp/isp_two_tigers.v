@@ -9,29 +9,35 @@
 //   G5 A5 G5 F5 (half) E5 C5 (1) | same
 //   C5 G4 (1) C5(2) | same
 //
-// Trigger: the display-valid green box (isp_top O_det_valid) -- a fresh valid
-// detection, or the tracker's own bounded hold of the SAME target.  It does
-// NOT use the tracker's 10-frame static "stable" gate, so a moving ball
-// triggers on its first valid box.  A held box is not a new detection: the
-// level merely stays high, so it produces no new rising edge.
-// A rising edge starts one song.  While playing, further edges are ignored
-// (no stacking, no restart on brief misses / skipped frames / hold).  After
-// the song ends, the same still-present target does not replay: the trigger
-// re-arms only after the level has been absent for REARM_MS (default 1 s), so
-// flicker cannot retrigger it.
+// Play rules (rev 2p):
+//   - A REAL detection pass starts the song from note 0 immediately if the
+//     trigger is armed and no song is playing.
+//   - While playing, further real detections only clear the 1 s watchdog;
+//     they never restart or re-stack the song.
+//   - If no real detection has arrived for TIMEOUT_MS (default 1 s), the song
+//     is stopped at once, the output is forced low, and the trigger re-arms.
+//     The timeout counts from the LAST REAL PASS, not from the green-box
+//     hold: skipped frames and the tracker's 4-frame hold do not reset it.
+//   - After the song completes, a continuously detected target does not
+//     replay it.  A >=1 s gap with no real detection re-arms; the next real
+//     detection starts a new song at note 0.
+//   - Reset: output low, sequencer cleared, trigger armed.
 //
-// CDC: target_present is a slow level from the CSI clock domain; it is
-// synchronized with a 2FF here.  The song/note dividers run on the stable
-// 50 MHz system clock.  Reset forces the output low and clears the sequencer.
+// CDC: det_tgl is a CSI-domain toggle, flipped once per real core pass (EVT:
+// tracker det_pass; CCL: det_result O_pass).  It is 2FF-synchronized here and
+// edge-detected into a one-cycle 50 MHz event.  At camera frame rates the
+// toggle period is >= one processed frame (~16 ms), far longer than the 2FF
+// latency, so no event can be lost.  Skipped processed frames and the tracker
+// hold never toggle it.
 // ==========================================================================
 module isp_two_tigers #(
-    parameter integer CLK_HZ   = 50_000_000,
-    parameter integer REARM_MS = 1000,
-    parameter integer GAP_MS   = 20
+    parameter integer CLK_HZ     = 50_000_000,
+    parameter integer TIMEOUT_MS = 1000,
+    parameter integer GAP_MS     = 20
 )(
     input  wire clk,
     input  wire rst_n,
-    input  wire target_present,  // green-box display-valid level (CSI domain)
+    input  wire det_tgl,       // CSI-domain toggle: one per real detection pass
     output reg  buzzer
 );
     // Note indices in the compact ROM
@@ -120,51 +126,62 @@ module isp_two_tigers #(
         end
     end
 
-    // ---- target CDC + rising edge + absence/re-arm timer --------------
-    reg tgt_s1, tgt_s2, tgt_d;
-    reg [31:0] absent_ms;
-    reg armed;
-    wire rise = tgt_s2 && !tgt_d;
-
+    // ---- CSI toggle -> 2FF -> one-cycle real-detection event -----------
+    reg tgl_s1, tgl_s2, tgl_d;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            tgt_s1 <= 1'b0; tgt_s2 <= 1'b0; tgt_d <= 1'b0;
-            absent_ms <= 32'd0;
+            tgl_s1 <= 1'b0; tgl_s2 <= 1'b0; tgl_d <= 1'b0;
         end
         else begin
-            tgt_s1 <= target_present;
-            tgt_s2 <= tgt_s1;
-            tgt_d  <= tgt_s2;
+            tgl_s1 <= det_tgl;
+            tgl_s2 <= tgl_s1;
+            tgl_d  <= tgl_s2;
+        end
+    end
+    // Suppress the reset-release edge: det_tgl may already be 1 when rst_n
+    // deasserts, and the 2FF would otherwise report that initial level as a
+    // detection.  Three 50 MHz cycles are enough for both sync stages to
+    // settle and are negligible against the >=16 ms real-detection period.
+    reg [2:0] fresh_blank;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) fresh_blank <= 3'd0;
+        else fresh_blank <= {fresh_blank[1:0], 1'b1};
+    end
+    wire fresh_evt = fresh_blank[2] && (tgl_s2 ^ tgl_d);
 
-            if (ms_tick) begin
-                if (!tgt_s2) begin
-                    if (absent_ms < REARM_MS) absent_ms <= absent_ms + 32'd1;
-                end
-                else absent_ms <= 32'd0;
-            end
+    // ---- 1 s watchdog counted from the last REAL detection ------------
+    // It is cleared only by fresh_evt.  ms_tick with no fresh event
+    // increments it; skipped frames / the green-box hold do not clear it.
+    reg [31:0] since_ms;
+    wire det_timeout = (since_ms >= TIMEOUT_MS);
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) since_ms <= 32'd0;
+        else if (fresh_evt) since_ms <= 32'd0;
+        else if (ms_tick) begin
+            if (since_ms < TIMEOUT_MS) since_ms <= since_ms + 32'd1;
         end
     end
 
-    // ---- song sequencer + note divider (50 MHz domain) -----------------
+    // ---- song sequencer state -----------------------------------------
     reg        playing;
     reg [4:0]  note_i;
     reg [15:0] note_ms, gap_ms;
     reg        note_on;
     reg [15:0] ndiv, half_cnt;
     reg        sq;
+    reg        armed;
 
-    wire [5:0] ent0 = song_note(note_i);
-    wire [5:0] ent_next = song_note(note_i + 5'd1);
-    wire [15:0] note_div_now = note_div(ent0[5:3]);
-    wire [15:0] dur_ms_now = {10'd0, ent0[2:0]} * 16'd250;
-    wire start = rise && armed && !playing;
+    wire [5:0]  ent0 = song_note(note_i);
+    wire [5:0]  ent_next = song_note(note_i + 5'd1);
+    wire        start = fresh_evt && armed && !playing;
+    wire        abort_now = det_timeout && !fresh_evt && playing;
 
-    // Re-arm control is independent of the sequencer: a long absence during
-    // playback must never freeze the notes.
+    // Armed only after 1 s with no real detection; cleared when a song starts.
+    // Continuous detections after a completed song keep it at 0, so no replay.
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) armed <= 1'b1;
         else if (start) armed <= 1'b0;
-        else if (!tgt_s2 && (absent_ms >= (REARM_MS-1))) armed <= 1'b1;
+        else if (det_timeout && !fresh_evt) armed <= 1'b1;
     end
 
     always @(posedge clk or negedge rst_n) begin
@@ -175,7 +192,15 @@ module isp_two_tigers #(
             buzzer <= 1'b0;
         end
         else begin
-            if (start) begin
+            if (abort_now) begin
+                // 1 s without a real detection: stop at once, mute, re-arm.
+                playing <= 1'b0;
+                note_on <= 1'b0;
+                sq      <= 1'b0;
+                note_ms <= 16'd0;
+                gap_ms  <= 16'd0;
+            end
+            else if (start) begin
                 playing <= 1'b1;
                 note_i  <= 5'd0;
                 note_ms <= (16'd2 * 16'd250) - GAP_MS - 16'd1; // first: C5 1 beat
@@ -225,7 +250,8 @@ module isp_two_tigers #(
                 sq <= 1'b0;
             end
 
-            buzzer <= playing && note_on && sq;
+            // Hard mute on the timeout edge; otherwise normal note output.
+            buzzer <= abort_now ? 1'b0 : (playing && note_on && sq);
         end
     end
 endmodule

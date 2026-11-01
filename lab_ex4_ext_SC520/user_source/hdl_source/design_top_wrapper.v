@@ -156,6 +156,7 @@ module design_top_wrapper (
     wire [11:0] S_det_cx, S_det_cy;   // fitted/bbox centre, same result group
     wire        S_det_green;          // optional green label, same group
     wire        S_det_valid, S_det_cand;
+    wire        S_det_fresh_tgl;      // one toggle per real detection pass
     wire [9:0]  S_det_cnt;
     // 圆形诊断。EVT_CIRCLE=0: {ovf,live,chord,rows,asp,size,pass,valid};
     // EVT_CIRCLE=1: {ovf,live,drop,0,0,0,pass,valid}（见 isp_evt_hud_map）。
@@ -1483,6 +1484,7 @@ isp_top u_isp_top (
 .O_det_cy        (S_det_cy),
 .O_det_green     (S_det_green),
 .O_det_valid     (S_det_valid),
+.O_det_fresh_tgl (S_det_fresh_tgl),
 .O_det_cand      (S_det_cand),
 .O_det_cnt       (S_det_cnt),
 .O_det_flags     (S_det_flags),
@@ -1666,20 +1668,23 @@ isp_top u_isp_top (
 
     // AE 状态在显示帧边界锁存（值来自 CSI 域中继，见 S_ae_csi）
 
-    // ---- 两只老虎单声部无源蜂鸣器（50 MHz 域；绿框电平异步 2FF CDC）----
-    // 触发源是画面上绿框的电平 O_det_valid（EVT: tracker out_valid，含有限
-    // hold；CCL: S_ccl_det_valid）。不用 10 帧静止的 stable 门限：运动球在
-    // 第一帧有效检测就出框。hold 期间电平只是保持高，没有新的上升沿，因此
-    // 不会被当成一次新检测；1 s 消失重臂和播放中不重启由播放器负责。
+    // ---- 两只老虎单声部无源蜂鸣器（50 MHz 域；新鲜检测 toggle 跨域）----
+    // 触发/看门狗只认“真实检测通过”事件：O_det_fresh_tgl 每个核心 fresh
+    // pass 翻转一次（EVT: tracker det_pass；CCL: det_result O_pass）。绿框
+    // hold（4 相机帧）和跳帧都不翻转它，所以 1 s 未识别从最后一次真实检测
+    // 算起，而不是绿框熄灭后再计 1 s。
+    // 播放中：重新检测只清零看门狗，不重启；连续 1 s 无真实检测立即停、
+    // 静音并重臂；再次检测从第一个音开始。播完目标仍在不复播，消失 1 s
+    // 后再检测才重播。
     isp_two_tigers #(
-        .CLK_HZ   (50_000_000),
-        .REARM_MS (1000),
-        .GAP_MS   (20)
+        .CLK_HZ     (50_000_000),
+        .TIMEOUT_MS (1000),
+        .GAP_MS     (20)
     ) u_two_tigers (
-        .clk            (I_sys_clk),
-        .rst_n          (S_rst_n),
-        .target_present (S_det_valid),
-        .buzzer         (O_buzzer)
+        .clk     (I_sys_clk),
+        .rst_n   (S_rst_n),
+        .det_tgl (S_det_fresh_tgl),
+        .buzzer  (O_buzzer)
     );
 
     // ---- 运行时长 DD:HH:MM:SS：50 MHz 固定分频 + 整组原子 CDC ----

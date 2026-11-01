@@ -593,49 +593,50 @@ Fresh tree `D:\FPGA\phase2_build_20261106`, final G-fixed RTL/SDC snapshot
 - Resource headroom is now ~9.8%; further logic needs a new build and
   timing/resource check.
 
-## rev 2n/2o — Two Tigers buzzer on the green-box target
+## rev 2p — Two Tigers buzzer on real detection passes
 
-- New `isp_two_tigers.v`: 32-entry compact note ROM ({note[2:0],
+- `isp_two_tigers.v`: 32-entry compact note ROM ({note[2:0],
   duration[2:0]} in 0.25 s half-beats, 120 BPM, 64 units = 16 s), 50 MHz
   square-wave divider, 20 ms articulation gap.  It does not contain/play
   the WAV.
-- **rev 2n bug**: the first wiring used `isp_top.O_det_stable` (tracker
-  `out_stable`, 10 detections inside a 16 px anchor window).  A moving
-  ball may be detected every frame and still never satisfy that static
-  gate, so it could never trigger.  Rev 2o removes the extra
-  `O_det_stable` port.
-- **rev 2o trigger**: the green-box display level `isp_top.O_det_valid`
-  (EVT = tracker `out_valid`, fresh/candidate plus its bounded 4-frame
-  hold; CCL = `S_ccl_det_valid`) is 2FF-synchronized from the CSI clock
-  into the 50 MHz domain; a rising edge starts one song.  A held box only
-  keeps the level high -- it creates no new edge, so hold is never
-  mistaken for a new detection.  Playing ignores new edges (no
-  restart/stacking).  A 1 s absence re-arms; the still-present target
-  after the song does not auto-replay.  Reset clears the sequencer and
-  forces the output low.
+- **rev 2n/2o history**: rev 2n used `O_det_stable` (10 detections inside
+  a 16 px anchor window), which a moving ball may never satisfy; rev 2o
+  used the green-box `O_det_valid` level.  Both are superseded.
+- **rev 2p trigger/watchdog**: the CSI-domain `out_fresh_tgl` toggles
+  once per REAL core pass (EVT = tracker `det_pass` = `S_ev_ok_v &&
+  flags[0]`; CCL = `det_result` `O_pass`).  Skipped processed frames and
+  the tracker's 4-frame hold do NOT toggle it.  The player 2FF-syncs the
+  toggle and edge-detects one 50 MHz event (plus 3-cycle reset blanking).
+  A real pass starts the song at note 0; while playing it only clears the
+  1 s watchdog (no restart); 1 s with no real pass stops immediately,
+  mutes and re-arms; the 1 s is counted from the LAST REAL PASS, not from
+  the green-box hold; after completion continuous passes do not replay;
+  a >1 s gap then a real pass replays from note 0.
 - Pin: `O_buzzer` -> C12 (LVCMOS33, 8 mA); C12 was unused in `pin.adc`.
 - `tb_two_tigers.v` (CLK_HZ=500 kHz scaled, real note frequencies and
-  16 s duration): reset silence; async target start; first C5, 956-cycle
-  period, 20 ms gap; 1/2/0.5-beat durations; 32-note ROM sequence; brief
-  loss during playback no restart; completion; no auto-replay; 1 s
-  re-arm; mid-song reset silent.  PASS.
+  16 s duration, async CSI toggle): reset silence; 1.2 s no pass no
+  start; first pass starts note 0; first C5 956-cycle period, 20 ms gap;
+  continuous passes no restart; brief miss; 999 ms return no timeout;
+  67 ms hold-like gap does not reset; 1 s timeout measured 499,949
+  cycles from the last real pass; stop/mute/re-arm; re-detection note 0;
+  full 16 s/32-note sequence and 1/2/0.5-beat durations; no replay with
+  continuous passes; 1 s gap then replay; mid-song reset silent.  PASS.
 - `tb_two_tigers_integration.v` (real `isp_ball_track` + `isp_two_tigers`,
   asynchronous 333.33 kHz CSI / 50 MHz clocks, 60 fps processed frames):
-  a moving ball (50 px/frame, `stable` never asserted) still raises the
-  green box and starts exactly one song; brief loss while still a moving
-  candidate drops the box but never restarts the song; after a static
-  track is confirmed, a 2-frame miss is HELD (`out_hold=1`) with no new
-  start; full 16 s/32-note sequence, C5 956-cycle period, 20 ms gap,
-  1/2/0.5-beat durations; no replay with the target still present;
-  absence > 1 s re-arms and reacquire starts a new song at note 0;
-  mid-song reset is silent; CDC latency 2 system cycles.  PASS.
+  a moving ball (50 px/frame, `stable` never asserted) starts exactly one
+  song; brief moving loss continues; after a static track is confirmed, a
+  2-frame miss is HELD (`out_hold=1`) with no new start; at 100 ms after
+  the last real pass the box is gone but the song continues; the 1 s
+  timeout is measured 499,675 cycles from the last real pass (not from
+  hold expiry, which would be ~533,000); then stop/mute/re-arm;
+  re-detection starts at note 0; mid-song reset silent.  PASS.
 - OSD regression: `tb_circle_text.v` PASS, and the final `hdmi_mixer`
   PPM/TXT dumps are byte-identical to the rev-2m baseline
   (`ce89b431...` / `685e1db1...`).  The timing fixes pipeline the
   frame-static text decode and the runtime OSD from `S_x/S_y` (two pixels
   ahead), so neither changes a displayed pixel.
 - Detector/HUD/timer/tracking unchanged.  Final build in
-  `D:\FPGA\phase2_build_rev2o_two_tigers`: syn +162 ps / hold +114 ps,
-  route +137 ps / hold +20 ps, 0 violations, slices 19,150/21,216
-  (90.26 %), bit SHA256 `1eae3a4d...e042900` (not flashed).  See research
+  `D:\FPGA\phase2_build_rev2p_timeout`: syn +134 ps / hold +114 ps,
+  route +144 ps / hold +20 ps, 0 violations, slices 17,268/21,216
+  (81.39 %), bit SHA256 `56bddade...c3fb8e` (not flashed).  See research
   section 18 for the full record.

@@ -204,6 +204,11 @@ module isp_top #(
     // Detection itself remains colour-agnostic.
     output wire        O_det_green	,
     output wire        O_det_valid	,   // 尺寸+形状 全部通过（迟滞点亮的绿色状态）
+    // Fresh-detection toggle (CSI domain): one toggle per REAL core pass
+    // (EVT: event-core fresh pass; CCL: det_result O_pass).  Skipped frames
+    // and the tracker's bounded hold do not toggle it.  The buzzer player
+    // 2FF-syncs it and edge-detects one event per real detection.
+    output wire        O_det_fresh_tgl	,
     output wire        O_det_cand	,   // 本帧尺寸通过、形状未过（橙色候选）
     // EVT_CIRCLE=1: processed-frame event count, saturated to 0..999 (HUD
     // three-digit limit; 999 means ">=999").  EVT_CIRCLE=0: 命中像素数 / 16.
@@ -1579,6 +1584,15 @@ awb #(
     wire [9:0]  S_ccl_cnt;
     wire        S_ccl_det_valid, S_ccl_det_cand;
 
+    // CCL fresh-detection toggle (one per O_pass pulse).  In the EVT build
+    // this register is optimised away because the output mux selects the
+    // tracker's toggle.
+    reg S_ccl_fresh_tgl;
+    always @(posedge axi4s_video_aclk or negedge I_rst_n) begin
+        if (!I_rst_n) S_ccl_fresh_tgl <= 1'b0;
+        else if (S_det_pass_w) S_ccl_fresh_tgl <= ~S_ccl_fresh_tgl;
+    end
+
     isp_det_result u_det_result (
         .I_clk    (axi4s_video_aclk),
         .I_rst_n  (I_rst_n),
@@ -1666,6 +1680,7 @@ awb #(
     // ------------------------------------------------------------------
     wire S_ev_pass = S_ev_ok_v && S_ev_flags[0];
     wire S_trk_valid, S_trk_hold, S_trk_stable, S_trk_ok, S_trk_green;
+    wire S_trk_fresh_tgl;
     wire S_trk_id_chg;
     wire [11:0] S_trk_cx, S_trk_cy, S_trk_r;
     wire [11:0] S_trk_minx, S_trk_maxx, S_trk_miny, S_trk_maxy;
@@ -1687,6 +1702,7 @@ awb #(
         .out_hold       (S_trk_hold),
         .out_stable     (S_trk_stable),
         .out_track_ok   (S_trk_ok),
+        .out_fresh_tgl  (S_trk_fresh_tgl),
         .out_id_chg     (S_trk_id_chg),
         .out_cx         (S_trk_cx), .out_cy(S_trk_cy), .out_r(S_trk_r),
         .out_minx       (S_trk_minx), .out_maxx(S_trk_maxx),
@@ -1719,6 +1735,7 @@ awb #(
     // Both paths cannot coexist: the CCL path alone costs ~8k slices and
     // phase 1 already uses 92.6% of the device.
     assign O_det_valid = EVT_CIRCLE ? S_trk_valid : S_ccl_det_valid;
+    assign O_det_fresh_tgl = EVT_CIRCLE ? S_trk_fresh_tgl : S_ccl_fresh_tgl;
     assign O_det_cand  = EVT_CIRCLE ? 1'b0     : S_ccl_det_cand;
     assign O_det_minx  = EVT_CIRCLE ? S_trk_minx : S_ccl_minx;
     assign O_det_maxx  = EVT_CIRCLE ? S_trk_maxx : S_ccl_maxx;

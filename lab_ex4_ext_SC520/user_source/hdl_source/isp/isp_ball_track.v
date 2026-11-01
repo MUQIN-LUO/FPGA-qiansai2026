@@ -56,6 +56,7 @@ module isp_ball_track #(
     output reg         out_hold,    // 1 = held, not a fresh detection
     output reg         out_stable,  // 1 = STABLE_N associated detections
     output reg         out_track_ok,// a track/candidate exists (for sampler)
+    output reg         out_fresh_tgl,// toggles once per fresh core pass
     output reg         out_id_chg,  // 1-cycle: target identity changed
     output reg  [11:0] out_cx,
     output reg  [11:0] out_cy,
@@ -159,10 +160,15 @@ module isp_ball_track #(
             acx <= 12'd0; acy <= 12'd0; ar <= 12'd0;
             tminx <= 12'd0; tmaxx <= 12'd0; tminy <= 12'd0; tmaxy <= 12'd0;
             out_valid <= 1'b0; out_hold <= 1'b0; out_stable <= 1'b0;
-            out_track_ok <= 1'b0; out_green <= 1'b0; out_id_chg <= 1'b0;
+            out_track_ok <= 1'b0; out_fresh_tgl <= 1'b0;
+            out_green <= 1'b0; out_id_chg <= 1'b0;
         end
         else if (det_evt) begin
             out_id_chg <= 1'b0;
+            // One toggle per REAL core pass.  Skipped processed frames
+            // (det_evt=0 or det_pass=0) and the bounded hold never toggle it;
+            // a CSI-domain consumer can 2FF-sync this and edge-detect it.
+            if (det_pass) out_fresh_tgl <= ~out_fresh_tgl;
             if (det_pass) begin
                 case (state)
                 // ---------------- new candidate / confirming ----------
