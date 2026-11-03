@@ -7,6 +7,10 @@
 中完成**选题二全部四项基础要求**：MIPI 采集 + HDMI 显示、Sobel 边缘检测、
 OSD 信息叠加（帧率文字 + 安路 Logo）。
 
+在基础要求之上，`lab_ex4_ext_SC520` 完成了多算法切换、波普风格化、处理延迟可视化
+等拓展要求，并在 `feat/phase2-circle` 分支实现了**绿色圆球识别 + 运动跟踪 +
+《两只老虎》蜂鸣器**的第二阶段原型（最终构建 rev 2p）。
+
 含完整 TD 工程、全部源码、引脚/时序约束，以及预编译位流。
 
 ---
@@ -168,6 +172,58 @@ R/G/B 平均值，则 `gain = 65536 × G / 该通道均值`。
 | Gamma | **完全没有**。线性光直出 HDMI，显示器按 sRGB 解释 → 中间调偏暗、饱和度发灰 |
 | 自动曝光 | 未实现。按键改作模式切换后 `ae_set` 固定为 `4'b1111`，曝光保持默认值 |
 
+### 2.3 第二阶段：绿色圆球识别与蜂鸣器（实验性）
+
+> 分支 `feat/phase2-circle`，最终构建 rev 2p。**未上板验证**：位流已生成但未烧录；
+> 低对比绿球漏检问题仍未解决，不能据此宣称识别稳定性已解决。
+
+在 `lab_ex4_ext_SC520` 的共享灰度通路上新增一条与主视频**并行**的检测链路，
+不改变原有算法切换、波普、延迟显示行为：
+
+```
+共享灰度 (R/4+G/2+B/4)
+  └─► 4×4 块梯度事件前端 (isp_grad_event96)
+        有符号 Sobel + 8-bit 方向量化，1 事件/块，带溢出计数
+        └─► 中心投票 + 径向直方图验证 (isp_circle_hough2)
+              去掉全分辨率边缘缓存；4px 中心网格投票 → 细中心 →
+              r=33..160 径向直方图 + 扇区覆盖/填充率/锐度评分
+              └─► 跨帧跟踪 (isp_ball_track)
+                    连续 10 次小范围稳定才锁框；
+                    运动门限 1.5r+16 / 20%r+2；
+                    稳定后 4 个真实相机帧 hold + 200 ms 硬超时
+                    └─► bbox + `CIRCLE X±ddd Y±ddd` OSD
+                          └─► 球内颜色采样 (isp_green_sample)
+                                绿色目标文字扩展为 `CIRCLE GREEN ...`（不参与 valid）
+```
+
+| 功能 | 实现 | 状态 |
+|---|---|---|
+| 绿色圆球识别 | `isp_grad_event96` + `isp_circle_hough2` | 合成场景通过；真实低对比绿球仍漏检 |
+| 运动球跟踪 | `isp_ball_track`，连续 10 次稳定才锁框 | 定向仿真 PASS |
+| 识别框与坐标 | `CIRCLE X±ddd Y±ddd`，绿色目标扩展为 `CIRCLE GREEN ...` | 逐像素仿真 PASS |
+| 运行时长 | 右下角 `DD:HH:MM:SS`，50 MHz 独立计时，request/ack 跨域原子搬运 | 仿真 PASS |
+| 蜂鸣器 | `isp_two_tigers`：32 音符 ROM、120 BPM、16 s；每次真实检测触发，连续 1 s 无真实检测则停止/静音/重臂 | 定向仿真 PASS；**未上板** |
+
+**触发语义**：只有检测器当帧真正给出 `pass`（`O_det_fresh_tgl` 翻转）才计时；
+跟踪器的绿框 hold、跳帧都不参与。播放中再次检测只清零看门狗，不从头重播；
+播完目标仍在时不会循环，消失 1 s 后再出现才从第一个音重播。
+
+**资源与时序（rev 2p 最终构建）**：slices 17,268/21,216 = **81.39%**，
+ERAM 86/108，DSP 27/40；setup WNS **+144 ps**、hold WNS **+20 ps**，0 违例。
+最终位流 `camera_to_dsi_display_rev2p_two_tigers_timeout.bit`
+（SHA256 `56bddade…fb8e`，1,789,539 bytes），**未烧录**。
+
+**已知限制（不得隐去）**：
+
+- 低对比绿球（如 RGB 40,200,40 / 140 灰，r60）仍漏检；
+- 半径 >32 px 的填充圆形高亮仍可能被框，形状法无法与球区分，本轮未加颜色门限；
+- 蜂鸣器仅通过定向仿真，未在板级喇叭上验证；
+- 检测 toggle 跨域要求真实检测间隔 > 2 个 50 MHz 周期（相机帧率下远满足）；
+  复位释放后 3 周期消隐内的事件会丢一次，下一帧补上。
+
+完整研究记录、模型/事件级/像素级证据与逐版构建数据见
+`lab_ex4_ext_SC520/PHASE2_CIRCLE_RESEARCH_20261101.md`。
+
 ## 3. 系统架构
 
 ```
@@ -178,18 +234,18 @@ MIPI D-PHY RX ──► CSI 解包 ──► RAW10 解包 ──► 转 AXI4-Str
                                                     │
                                                     ▼
                               ISP：BLC → Demosaic(BGGR) → AWB
-                                                    │
-                                    ┌───────────────┴──────────────┐
-                                    │  lab_ex2 额外插入：            │
-                                    │  灰度 R/4+G/2+B/4              │
-                                    │  → 2 行行缓存 → Sobel → 二值化  │
-                                    └───────────────┬──────────────┘
-                                                    ▼
-                                   DDR2 帧缓存（写/读乒乓）
-                                                    ▼
-                              VTC 视频时序 → HDMI Mixer → HDMI TX(TMDS)
-                                                    ▼
-                                          HDMI 显示器 1280×720@60
+                                     │                   │
+                       ┌─────────────┘                   └──────────────┐
+                       ▼                                                ▼
+             lab_ex2 显示通路                                   lab_ex4 检测通路（旁路）
+   灰度 R/4+G/2+B/4 → 2 行缓存 → Sobel → 二值化      共享灰度 → 4×4 块梯度事件
+                       │                                → 中心投票 + 径向直方图
+                       ▼                                → 跟踪 / CIRCLE OSD / 蜂鸣器
+              DDR2 帧缓存（写/读乒乓）                        （不进入主视频）
+                       ▼
+          VTC 视频时序 → HDMI Mixer → HDMI TX(TMDS)
+                       ▼
+             HDMI 显示器 1280×720@60
 ```
 
 ### 时钟结构（取自 `camera_to_dsi_display.sdc`）
@@ -229,12 +285,22 @@ FPGA-qiansai2026/
 ├─ lab_ex2_edge_SC520/               ← 官方参考工程：仅边缘检测
 │  └─ （目录结构同上）
 │
-└─ lab_ex4_ext_SC520/                ← ★ 拓展要求开发工程（由 lab_ex1 复制）
-   └─ （目录结构同 lab_ex1，不含编译产物，首次打开需完整综合）
+└─ lab_ex4_ext_SC520/                ← ★ 拓展要求 + 第二阶段开发工程（由 lab_ex1 复制）
+   ├─ user_source/hdl_source/isp/
+   │  ├─ isp_grad_event96.v          ← 4×4 块梯度事件前端
+   │  ├─ isp_circle_hough2.v         ← 中心投票 + 径向直方图圆检测
+   │  ├─ isp_ball_track.v            ← 跨帧跟踪 / 稳定 / hold
+   │  ├─ isp_green_sample.v          ← 球内颜色采样（GREEN 标签）
+   │  ├─ isp_two_tigers.v            ← 《两只老虎》蜂鸣器
+   │  ├─ isp_evt_hud_map.v           ← 检测 HUD 位映射
+   │  └─ isp_rtc_cdc.v               ← 运行时长跨时钟域搬运
+   ├─ sim/tb/                        ← 第二阶段定向仿真（跟踪/文字/蜂鸣器）
+   └─ PHASE2_CIRCLE_RESEARCH_20261101.md  ← 研究记录与逐版证据
+   （其余目录结构同 lab_ex1，不含编译产物，首次打开需完整综合）
 ```
 
-> `lab_ex1` 作为**基础要求的定版基线**保留，后续拓展要求（2.4 / 2.5）在 `lab_ex4_ext_SC520`
-> 中开发，避免验证过的基线被实验性改动污染。
+> `lab_ex1` 作为**基础要求的定版基线**保留，后续拓展要求（2.4 / 2.5）与第二阶段
+> 圆球识别在 `lab_ex4_ext_SC520` 中开发，避免验证过的基线被实验性改动污染。
 
 ## 5. 如何打开工程
 
@@ -264,6 +330,16 @@ FPGA-qiansai2026/
 烧录：TD → `BitWriter` → `Add` 选位流 → `Mode = PROGRAM_SRAM` → `Run`
 （SRAM 掉电丢失；最终演示前用 `PROGRAM_FLASH` 烧进板载 GD25WQ128 Flash，约 110 秒）
 
+第二阶段位流**未随仓库提交**，位于本地构建快照
+`../phase2_build_rev2p_timeout/deliverable/`：
+
+| 文件 | 用途 |
+|---|---|
+| `camera_to_dsi_display_rev2p_two_tigers_timeout.bit` | 圆球识别 + 跟踪 + 《两只老虎》蜂鸣器（1 s 真实检测看门狗） |
+
+SHA256 `56bddade58945fee33457038c910d807a30a31d7322f0f8f047992425cc3fb8e`，
+1,789,539 bytes，**未烧录**。
+
 ## 7. 图像处理算法说明（lab_ex2）
 
 模块：`user_source/hdl_source/isp/edge_detect_96.v`
@@ -284,6 +360,11 @@ FPGA-qiansai2026/
 - 摄像头型号务必与工程匹配：本仓库为 **SC520CS** 版本；
   SC500CS 需使用 `lab_ex*_SC500_720P` 系列工程（顶层例化 `uicfgcs500`）。
 - 差分对（MIPI / HDMI）的引脚约束通常只约束 P 端，具体见 `pin.adc`。
+- 第二阶段检测器由 `isp_top.v` 的 `EVT_CIRCLE` 参数选择（默认 1）；
+  `EVT_CIRCLE=0` 时完整保留第一阶段 CCL/形状检测，两种配置都写入约束文件。
+- 蜂鸣器 `O_buzzer` 约束在 **C12**（LVCMOS33，8 mA），`pin.adc` 原先无 C12；
+  使用前确认板上 C12 已接无源蜂鸣器，否则该引脚无输出负载。
+- 识别框、`GREEN` 标签与运行时长 OSD 均只改显示，不改变检测 `valid` 语义。
 
 ## 9. 参考资料
 
